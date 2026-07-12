@@ -52,7 +52,3 @@ Hexagonal (`docs/ARCHITECTURE.md` is authoritative). Strict dependency rules enf
 - **Dedupe**: at-most-once by event + message keys. Ephemeral Slack history recovery is not persisted.
 - **Canonical keys**: `slack:{team}:dm:{channel}` or `slack:{team}:channel:{channel}:thread:{root_ts}`.
 - **Schema**: `PRAGMA user_version` for SQLite migrations.
-
-## OpenCode config
-
-`.opencode/opencode.json` loads caveman mode instruction and ADK docs MCP server. Skills directory has ADK + ponytail skills. No repo-local agents configured.
