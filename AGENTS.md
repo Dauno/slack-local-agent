@@ -9,10 +9,14 @@ Go 1.25 Slack Socket Mode agent using Google ADK + OpenAI-compatible LLM.
 ## Build & dev commands
 
 ```sh
-go build -trimpath -o bin/local-agent ./cmd/local-agent
-go test ./...
+go build -trimpath -o bin/local-agent ./cmd/local-agent   # production binary
+go build -trimpath ./cmd/local-agent                        # verify-only (no -o)
+go test ./...                                              # includes architecture dep check
 go vet ./...
+go mod tidy
 ```
+
+No Makefile, no CI workflows, no `.golangci.yml`. `go vet` is the only lint.
 
 Release metadata: `-ldflags "-X github.com/Dauno/slack-local-agent/internal/buildinfo.Version=vX.Y.Z -X ...Commit=... -X ...Date=..."`
 
@@ -28,17 +32,21 @@ Release metadata: `-ldflags "-X github.com/Dauno/slack-local-agent/internal/buil
 
 ## Architecture
 
-Hexagonal (`docs/ARCHITECTURE.md` is authoritative). Strict dependency rules enforced by `internal/architecture/dependencies_test.go`:
+Hexagonal. Strict dependency rules enforced by `internal/architecture/dependencies_test.go`:
 
 - `internal/domain` — stdlib only. Pure data + policy.
 - `internal/port` — domain + stdlib only. Shared interfaces.
-- `internal/usecase` — must not import adapters or third-party SDKs.
-- `internal/adapter` — must not import other adapters (composed in `internal/app`).
+- `internal/usecase` — must not import adapters or third-party SDKs. Sub-packages: `bootstrap`, `bot`, `doctor`, `memory`.
+- `internal/adapter` — must not import other adapters (composed in `internal/app`). Ten adapters: adkagent, envfile, fsproject, logging, memorycurator, memoryprojector, modelcalllimiter, openaillm, slack, sqlite.
 - `internal/app` — composition root; must not import CLI layer.
 
-`internal/integration` is a cross-package test layer that wires adapters and
-usecases together. It is exempt from the architecture dependency check (only
-`_test.go` files).
+`internal/integration` is a cross-package test layer that wires adapters and usecases together. Exempt from the architecture dependency check (`_test.go` files only).
+
+`docs/ARCHITECTURE.md` is the authoritative architecture reference but is **gitignored** (local-only). The rules above are the executable subset.
+
+## Data directory
+
+`.local-agent/` is gitignored. Contains: `config.yaml`, `local-agent.db` (SQLite), `app-manifest.local.yaml`, `local.env.example`, and `memory/` (OKF file projections).
 
 ## Testing quirks
 
