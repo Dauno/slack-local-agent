@@ -16,7 +16,23 @@ tool-calling, or autonomous background-task access.
 - An app-level token (`xapp-...`) with `connections:write`.
 - An API key for an OpenAI-compatible Chat Completions endpoint.
 
-## Build
+## Install
+
+```sh
+./install.sh
+```
+
+By default the binary is placed in `$HOME/.local-agent/bin/local-agent`. Override
+the destination with `PREFIX`:
+
+```sh
+PREFIX=/usr/local ./install.sh
+```
+
+Build metadata is injected automatically from the current git revision. Override
+with `VERSION`, `COMMIT`, and `DATE` environment variables.
+
+### Manual build
 
 ```sh
 go build -trimpath -o bin/local-agent ./cmd/local-agent
@@ -31,7 +47,7 @@ Run setup from the directory whose Slack context and state should remain
 isolated:
 
 ```sh
-bin/local-agent init
+local-agent init
 ```
 
 The wizard creates missing base artifacts first, then guides Slack app creation,
@@ -53,9 +69,9 @@ Generated local state:
 Then validate and run:
 
 ```sh
-bin/local-agent doctor
-bin/local-agent doctor --live
-bin/local-agent run
+local-agent doctor
+local-agent doctor --live
+local-agent run
 ```
 
 `doctor` is offline by default. Only `doctor --live` contacts Slack and the
@@ -65,9 +81,9 @@ first.
 Other commands:
 
 ```sh
-bin/local-agent manifest
-bin/local-agent manifest --write
-bin/local-agent version
+local-agent manifest
+local-agent manifest --write
+local-agent version
 ```
 
 ## Configuration
