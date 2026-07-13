@@ -198,3 +198,37 @@ func TestTrustedEntityOperationsUsesExactSlugLookupBeyondRecallCap(t *testing.T)
 		t.Fatalf("TrustedEntityOperations() = %#v", ops)
 	}
 }
+
+func TestValidateAndApplySkipsCuratorCreateForExistingTopic(t *testing.T) {
+	store, err := sqlite.Initialize(t.Context(), t.TempDir()+"/memory.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	limits := domain.MemoryLimits{MaxTopics: 2, MaxLinks: 1, MaxTopicChars: 100}
+	if _, err := store.ApplyMemoryPatch(t.Context(), domain.MemoryPatch{
+		ConversationKey: "slack:T12345678:dm:D12345678", ExchangeTS: "1",
+		Operations: []domain.MemoryOp{{Type: domain.MemoryOpCreateTopic, TopicSlug: "dauno", TopicTitle: "Dauno", Content: "Existing fact"}},
+	}, limits); err != nil {
+		t.Fatal(err)
+	}
+	service, err := memory.New(memory.Config{
+		Recall: domain.MemoryRecallConfig{Enabled: true, MaxTopics: 1, MaxChars: 100},
+		Limits: limits, MaxPatchOps: 1,
+	}, memory.Dependencies{Store: store, Logger: testLogger{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outcome, err := service.ValidateAndApply(t.Context(), domain.MemoryPatch{
+		ConversationKey: "slack:T12345678:dm:D12345678", ExchangeTS: "2",
+		Operations: []domain.MemoryOp{{Type: domain.MemoryOpCreateTopic, TopicSlug: "dauno", TopicTitle: "Dauno", Content: "Repeated fact"}},
+	})
+	if err != nil || outcome != memory.OutcomeApplyNoop {
+		t.Fatalf("ValidateAndApply() = %v, %v; want no-op", outcome, err)
+	}
+	topic, err := store.GetTopic(t.Context(), "dauno")
+	if err != nil || topic.Content != "Existing fact" {
+		t.Fatalf("existing topic = %#v, %v", topic, err)
+	}
+}

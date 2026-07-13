@@ -222,6 +222,13 @@ func (s *Service) ValidateAndApply(ctx context.Context, patch domain.MemoryPatch
 	if err := s.validatePatch(patch); err != nil {
 		return OutcomeApplyRejected, err
 	}
+	patch, err := s.withoutExistingCreates(ctx, patch)
+	if err != nil {
+		return OutcomeApplyRejected, err
+	}
+	if len(patch.Operations) == 0 {
+		return OutcomeApplyNoop, nil
+	}
 	patch = s.redactPatch(patch) // Apply redaction only after raw credentials and control text were rejected.
 	applied, err := s.store.ApplyMemoryPatch(ctx, patch, s.cfg.Limits)
 	if err != nil {
@@ -236,6 +243,42 @@ func (s *Service) ValidateAndApply(ctx context.Context, patch domain.MemoryPatch
 		}
 	}
 	return OutcomeApplyUpdated, nil
+}
+
+// withoutExistingCreates prevents a curator retry from repeatedly failing when
+// it proposes a topic slug that was already persisted by an earlier exchange.
+func (s *Service) withoutExistingCreates(ctx context.Context, patch domain.MemoryPatch) (domain.MemoryPatch, error) {
+	ownerKey := domain.SlackOwnerKey(patch.ConversationKey, patch.SourceAuthorID)
+	operations := make([]domain.MemoryOp, 0, len(patch.Operations))
+	created := make(map[string]struct{})
+	for _, op := range patch.Operations {
+		if op.Type != domain.MemoryOpCreateTopic {
+			operations = append(operations, op)
+			continue
+		}
+
+		slug := op.TopicSlug
+		if op.BundlePath == "people" {
+			slug = domain.ScopedPersonTopicSlug(slug, ownerKey)
+		}
+		if _, exists := created[slug]; exists {
+			// Preserve duplicate operations in one patch so SQLite rejects the
+			// malformed patch atomically instead of silently dropping data.
+			operations = append(operations, op)
+			continue
+		}
+		exists, err := s.store.TopicExistsBySlug(ctx, slug)
+		if err != nil {
+			return domain.MemoryPatch{}, fmt.Errorf("check existing memory topic %q: %w", slug, err)
+		}
+		if exists {
+			continue
+		}
+		created[slug] = struct{}{}
+		operations = append(operations, op)
+	}
+	patch.Operations = operations
+	return patch, nil
 }
 
 // Validate checks a proposed patch without writing it, allowing optional
