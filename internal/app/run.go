@@ -163,6 +163,22 @@ func (a *Application) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Wire the durable ADK runtime. When no tools are registered, it behaves
+	// identically to the legacy agent but persists session history.
+	sessionSvc := adaptersqlite.NewAdkSessionService(store)
+	if sessionSvc != nil {
+		runtime, rtErr := adkagent.NewRuntime(adkagent.RuntimeConfig{
+			AgentName:      cfg.Agent.Name,
+			SessionService: sessionSvc,
+			Model:          llm,
+		})
+		if rtErr != nil {
+			return redactor.Error(fmt.Errorf("initialize ADK runtime: %w", rtErr))
+		}
+		service.AddRuntime(runtime, adaptersqlite.NewConfirmationStore(store))
+		logger.Info("ADK durable runtime enabled", "session_service", "sqlite")
+	}
+
 	if cfg.Memory.Enabled {
 		memorySvc, memErr := memoryusecase.New(memoryusecase.Config{
 			Recall: domain.MemoryRecallConfig{

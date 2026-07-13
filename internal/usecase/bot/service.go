@@ -31,16 +31,18 @@ type Config struct {
 type Dependencies struct {
 	Store      port.ConversationStore
 	Agent      port.Agent
+	Runtime    port.AgentRuntime
 	History    port.HistoryReader
 	Publisher  port.ResponsePublisher
 	Clock      port.Clock
 	Logger     port.Logger
 	ModelCalls port.ModelCallLimiter
 
-	SanitizeContent func(string) string
-	Memory          port.MemoryRetriever
-	Exchange        port.AssistantExchangeWriter
-	Enricher        port.ContextEnricher
+	SanitizeContent    func(string) string
+	Memory             port.MemoryRetriever
+	Exchange           port.AssistantExchangeWriter
+	Enricher           port.ContextEnricher
+	ConfirmationStore  port.ConfirmationDeliveryStore
 }
 
 type Outcome string
@@ -56,27 +58,29 @@ const (
 )
 
 type Service struct {
-	cfg        Config
-	store      port.ConversationStore
-	agent      port.Agent
-	history    port.HistoryReader
-	publisher  port.ResponsePublisher
-	clock      port.Clock
-	logger     port.Logger
-	limiter    *Limiter
-	modelCalls port.ModelCallLimiter
-	sanitize   func(string) string
-	recall     port.MemoryRetriever
-	exchange   port.AssistantExchangeWriter
-	enricher   port.ContextEnricher
+	cfg               Config
+	store             port.ConversationStore
+	agent             port.Agent
+	runtime           port.AgentRuntime
+	history           port.HistoryReader
+	publisher         port.ResponsePublisher
+	clock             port.Clock
+	logger            port.Logger
+	limiter           *Limiter
+	modelCalls        port.ModelCallLimiter
+	sanitize          func(string) string
+	recall            port.MemoryRetriever
+	exchange          port.AssistantExchangeWriter
+	enricher          port.ContextEnricher
+	confirmationStore port.ConfirmationDeliveryStore
 }
 
 func New(cfg Config, deps Dependencies) (*Service, error) {
 	if deps.Store == nil {
 		return nil, errors.New("conversation store is required")
 	}
-	if deps.Agent == nil {
-		return nil, errors.New("agent is required")
+	if deps.Agent == nil && deps.Runtime == nil {
+		return nil, errors.New("agent or runtime is required")
 	}
 	if deps.Publisher == nil {
 		return nil, errors.New("response publisher is required")
@@ -115,10 +119,11 @@ func New(cfg Config, deps Dependencies) (*Service, error) {
 		deps.ModelCalls = unlimitedModelCalls{}
 	}
 	return &Service{
-		cfg: cfg, store: deps.Store, agent: deps.Agent, history: deps.History,
-		publisher: deps.Publisher, clock: deps.Clock, logger: deps.Logger,
+		cfg: cfg, store: deps.Store, agent: deps.Agent, runtime: deps.Runtime,
+		history: deps.History, publisher: deps.Publisher, clock: deps.Clock, logger: deps.Logger,
 		limiter: NewLimiter(cfg.MaxConcurrentCalls), modelCalls: deps.ModelCalls, sanitize: deps.SanitizeContent,
 		recall: deps.Memory, exchange: deps.Exchange, enricher: deps.Enricher,
+		confirmationStore: deps.ConfirmationStore,
 	}, nil
 }
 
@@ -237,6 +242,11 @@ func (s *Service) Handle(ctx context.Context, invocation domain.Invocation) (Out
 		return OutcomeBusy, nil
 	}
 	s.logger.Info("model call started", "conversation_key", key, "event_id", invocation.EventID)
+
+	if s.runtime != nil {
+		return s.handleRuntimeTurn(ctx, modelCtx, cancel, invocation, key, modelContext, memory, agentContext, metadata, modelRelease)
+	}
+
 	response, modelErr := func() (string, error) {
 		defer modelRelease() // Shared permit covers only Agent.Respond, not Slack or database latency.
 		return s.agent.Respond(modelCtx, port.AgentRequest{
@@ -259,6 +269,79 @@ func (s *Service) Handle(ctx context.Context, invocation domain.Invocation) (Out
 	}
 	s.logger.Info("model call completed", "conversation_key", key, "event_id", invocation.EventID)
 
+	return s.finalizeTurn(ctx, invocation, key, response, metadata)
+}
+
+func (s *Service) handleRuntimeTurn(ctx context.Context, modelCtx context.Context, cancel func(), invocation domain.Invocation, key domain.ConversationKey, modelContext []domain.Message, memory []domain.MemorySnippet, agentContext domain.AgentContext, metadata domain.ConversationMetadata, modelRelease func()) (Outcome, error) {
+	turn, modelErr := func() (port.AgentTurn, error) {
+		defer modelRelease()
+		return s.runtime.Run(modelCtx, port.AgentRequest{
+			Messages: modelContext,
+			Memory:   memory,
+			Context:  agentContext,
+		})
+	}()
+	cancel()
+	if modelErr != nil {
+		s.logger.Error("model call failed", "conversation_key", key, "error", modelErr)
+		if _, err := s.publisher.Publish(ctx, invocation.ReplyTarget(), s.cfg.ModelErrorMessage); err != nil {
+			s.logger.Error("model error response failed", "conversation_key", key, "error", err)
+			return OutcomePublishFailed, nil
+		}
+		return OutcomeModelFailed, nil
+	}
+	s.logger.Info("model call completed", "conversation_key", key, "event_id", invocation.EventID)
+
+	if turn.PendingConfirmation != nil {
+		return s.handlePendingConfirmation(ctx, invocation, key, turn)
+	}
+
+	return s.finalizeTurn(ctx, invocation, key, turn.Text, metadata)
+}
+
+func (s *Service) handlePendingConfirmation(ctx context.Context, invocation domain.Invocation, key domain.ConversationKey, turn port.AgentTurn) (Outcome, error) {
+	pc := turn.PendingConfirmation
+	pc.ConversationKey = key
+	pc.Actor = invocation.UserID
+
+	if s.confirmationStore != nil {
+		delivery := port.ConfirmationDelivery{
+			WrapperCallID:   pc.WrapperCallID,
+			OriginalCallID:  pc.OriginalCallID,
+			SessionID:       fmt.Sprintf("adk:%s", key),
+			Actor:           pc.Actor,
+			TeamID:          invocation.TeamID,
+			ChannelID:       invocation.ChannelID,
+			ThreadTS:        invocation.ThreadTS,
+			ConversationKey: key,
+			Status:          port.ConfirmationPending,
+			Expiry:          pc.Expiry,
+		}
+		if err := s.confirmationStore.CreateDelivery(ctx, delivery); err != nil {
+			s.logger.Error("confirmation delivery creation failed", "conversation_key", key, "error", err)
+		}
+	}
+
+	// Publish the confirmation prompt as a regular message.
+	// Full interactive buttons are deferred (Phase 2 deferred work).
+	confirmText := fmt.Sprintf(":lock: %s\n\n*Call ID*: `%s`\n*Expires*: %s\n\nReply `approve %s` or `reject %s` to proceed.",
+		pc.Summary, pc.OriginalCallID, pc.Expiry.Format("15:04"), pc.WrapperCallID, pc.WrapperCallID)
+
+	safeText := s.sanitize(confirmText)
+	if _, err := s.publisher.Publish(ctx, invocation.ReplyTarget(), safeText); err != nil {
+		s.logger.Error("confirmation prompt publish failed", "conversation_key", key, "error", err)
+		return OutcomePublishFailed, nil
+	}
+
+	// Mark the delivery as published if the store is available.
+	if s.confirmationStore != nil {
+		_ = s.confirmationStore.MarkPublished(ctx, pc.WrapperCallID, "")
+	}
+
+	return OutcomeResponded, nil
+}
+
+func (s *Service) finalizeTurn(ctx context.Context, invocation domain.Invocation, key domain.ConversationKey, response string, metadata domain.ConversationMetadata) (Outcome, error) {
 	safeResponse := s.sanitize(response)
 	if strings.TrimSpace(safeResponse) == "" {
 		s.logger.Error("model response sanitizer removed all assistant content", "conversation_key", key)
@@ -333,6 +416,11 @@ func messageChars(messages []domain.Message) int {
 func (s *Service) AddMemory(recall port.MemoryRetriever, exchange port.AssistantExchangeWriter) {
 	s.recall = recall
 	s.exchange = exchange
+}
+
+func (s *Service) AddRuntime(runtime port.AgentRuntime, confirmations port.ConfirmationDeliveryStore) {
+	s.runtime = runtime
+	s.confirmationStore = confirmations
 }
 
 func (s *Service) enrich(ctx context.Context, invocation domain.Invocation) domain.AgentContext {
