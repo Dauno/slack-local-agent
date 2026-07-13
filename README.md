@@ -15,14 +15,23 @@ in a project-local SQLite database.
 
 ## Install
 
-With Go 1.25+ installed, run:
+With Go 1.25+ installed, install the latest release:
 
 ```sh
 curl -fsSL -H 'Accept: application/vnd.github.raw+json' \
   'https://api.github.com/repos/Dauno/local-agent/contents/install.sh?ref=main' | bash
 ```
 
-Or from a local clone:
+The installer resolves the latest GitHub Release, builds its tag, and records
+that tag in `local-agent version`. Install a specific release with:
+
+```sh
+curl -fsSL -H 'Accept: application/vnd.github.raw+json' \
+  'https://api.github.com/repos/Dauno/local-agent/contents/install.sh?ref=main' | VERSION=v0.1.0 bash
+```
+
+From a local clone, `./install.sh` builds the checkout. An untagged checkout is
+reported as `dev`:
 
 ```sh
 ./install.sh
@@ -41,8 +50,7 @@ Override the destination with `PREFIX`:
 PREFIX=$HOME/.local/bin ./install.sh
 ```
 
-Build metadata is injected automatically from the current git revision. Override
-with `VERSION`, `COMMIT`, and `DATE` environment variables.
+Build metadata includes the selected tag, current commit, and build date.
 
 ### Manual build
 
