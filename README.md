@@ -18,7 +18,8 @@ in a project-local SQLite database.
 With Go 1.25+ installed, run:
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/Dauno/local-agent/main/install.sh | bash
+curl -fsSL -H 'Accept: application/vnd.github.raw+json' \
+  'https://api.github.com/repos/Dauno/local-agent/contents/install.sh?ref=main' | bash
 ```
 
 Or from a local clone:
