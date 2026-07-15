@@ -209,3 +209,7 @@ go build -trimpath ./cmd/local-agent
 
 The suite uses temporary SQLite databases and local HTTP/Slack fakes; live
 provider credentials are not needed.
+
+## Changelog
+
+- 2026-07-15: Test entry for CI/CD workflow demo.
