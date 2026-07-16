@@ -137,7 +137,7 @@ func (e *realExecutor) GitWorktree(ctx context.Context, dir string) (string, err
 
 // ParseModelCatalog decodes only the version-pinned fields the mapper needs
 // from `codex debug models --bundled`. The command is experimental in Codex
-// 0.144.1; a schema change is a compatibility failure.
+// 0.144.5; a schema change is a compatibility failure.
 func ParseModelCatalog(data []byte) ([]ModelInfo, error) {
 	var catalog struct {
 		Models []struct {

@@ -117,7 +117,7 @@ func ParseRunEvents(reader io.Reader, bounds Bounds, onActivity func(name, statu
 			parsed.Failed = true
 			terminal = true
 		case "error":
-			// Codex 0.144.1 can emit an unrecoverable error notification and
+			// Codex 0.144.5 can emit an unrecoverable error notification and
 			// then the terminal turn.failed event. Preserve failure state but
 			// keep parsing that valid sequence.
 			parsed.Failed = true

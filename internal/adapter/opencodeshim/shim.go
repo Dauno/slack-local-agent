@@ -20,11 +20,11 @@ const (
 	// ProviderName identifies this mapper in describe responses.
 	ProviderName = "opencode"
 	// ShimVersion identifies the mapper build.
-	ShimVersion = "v0.1.0"
+	ShimVersion = "v0.1.1"
 	// SupportedCLIVersion is the only OpenCode version covered by the recorded
 	// fixtures of this mapper build. Expanding the range requires fixtures and
 	// acceptance tests for every newly accepted version.
-	SupportedCLIVersion = "1.17.20"
+	SupportedCLIVersion = "1.18.3"
 	// DefaultExecutable is the OpenCode executable resolved through PATH.
 	DefaultExecutable = "opencode"
 )

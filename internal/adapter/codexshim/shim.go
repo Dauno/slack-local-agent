@@ -20,12 +20,12 @@ const (
 	// ProviderName identifies this mapper in describe responses.
 	ProviderName = "codex"
 	// ShimVersion identifies the mapper build.
-	ShimVersion = "v0.1.0"
+	ShimVersion = "v0.1.1"
 	// SupportedCLIVersion is the only Codex CLI version covered by the
 	// recorded fixtures of this mapper build. The experimental
 	// `codex debug models` schema and the JSONL event subset are pinned to
 	// it; accepting another version requires new fixtures and tests.
-	SupportedCLIVersion = "0.144.1"
+	SupportedCLIVersion = "0.144.5"
 	// DefaultExecutable is the Codex executable resolved through PATH.
 	DefaultExecutable = "codex"
 )

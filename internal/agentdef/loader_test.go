@@ -992,7 +992,7 @@ func TestTrackedDefinitionsLoad(t *testing.T) {
 	}
 	root := defs.Agents["root_agent"]
 	rootTools := root.AgentTools
-	if got, want := strings.Join(rootTools, ","), "explore,opencode_worker,codex_worker"; got != want {
+	if got, want := strings.Join(rootTools, ","), "explore,opencode_worker,codex_worker,improve_agent"; got != want {
 		t.Fatalf("tracked root_agent.agent_tools = %v, want %v", rootTools, strings.Split(want, ","))
 	}
 	for _, policy := range []string{

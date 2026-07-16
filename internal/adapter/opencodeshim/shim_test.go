@@ -117,13 +117,13 @@ func terminalOf(responses []cliprotocol.Response) cliprotocol.Response {
 // --- describe ---
 
 func TestDescribeSupportedVersion(t *testing.T) {
-	exec := &fakeExecutor{version: "1.17.20"}
+	exec := &fakeExecutor{version: "1.18.3"}
 	responses := runShim(t, exec, cliprotocol.NewRequest("d-1", cliprotocol.MethodDescribe))
 	terminal := terminalOf(responses)
 	if terminal.Type != cliprotocol.TypeDescription {
 		t.Fatalf("expected description, got %+v", terminal)
 	}
-	if terminal.CLIVersion != "1.17.20" || terminal.ShimVersion != opencodeshim.ShimVersion {
+	if terminal.CLIVersion != "1.18.3" || terminal.ShimVersion != opencodeshim.ShimVersion {
 		t.Fatalf("unexpected versions: %+v", terminal)
 	}
 	if terminal.Name != "opencode" {
@@ -132,7 +132,7 @@ func TestDescribeSupportedVersion(t *testing.T) {
 }
 
 func TestDescribeLeadingVAccepted(t *testing.T) {
-	exec := &fakeExecutor{version: "v1.17.20\n"}
+	exec := &fakeExecutor{version: "v1.18.3\n"}
 	terminal := terminalOf(runShim(t, exec, cliprotocol.NewRequest("d-1", cliprotocol.MethodDescribe)))
 	if terminal.Type != cliprotocol.TypeDescription {
 		t.Fatalf("leading v should be accepted, got %+v", terminal)
@@ -140,7 +140,7 @@ func TestDescribeLeadingVAccepted(t *testing.T) {
 }
 
 func TestDescribeRejectsWrongVersion(t *testing.T) {
-	for _, version := range []string{"1.17.19", "1.17.20-beta", "1.18.0"} {
+	for _, version := range []string{"1.18.2", "1.18.3-beta", "1.18.4"} {
 		exec := &fakeExecutor{version: version}
 		terminal := terminalOf(runShim(t, exec, cliprotocol.NewRequest("d-1", cliprotocol.MethodDescribe)))
 		if terminal.Type != cliprotocol.TypeError || terminal.Code != cliprotocol.CodeUnsupported {

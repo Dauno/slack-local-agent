@@ -146,12 +146,12 @@ func lunaModels() []codexshim.ModelInfo {
 // --- describe ---
 
 func TestDescribeSupportedVersion(t *testing.T) {
-	exec := &fakeExecutor{version: "codex-cli 0.144.1"}
+	exec := &fakeExecutor{version: "codex-cli 0.144.5"}
 	terminal := terminalOf(runShim(t, exec, cliprotocol.NewRequest("d-1", cliprotocol.MethodDescribe)))
 	if terminal.Type != cliprotocol.TypeDescription {
 		t.Fatalf("expected description, got %+v", terminal)
 	}
-	if terminal.CLIVersion != "0.144.1" || terminal.ShimVersion != codexshim.ShimVersion {
+	if terminal.CLIVersion != "0.144.5" || terminal.ShimVersion != codexshim.ShimVersion {
 		t.Fatalf("unexpected versions: %+v", terminal)
 	}
 	if terminal.Name != "codex" {
@@ -160,7 +160,7 @@ func TestDescribeSupportedVersion(t *testing.T) {
 }
 
 func TestDescribeToleratesSurroundingWhitespace(t *testing.T) {
-	exec := &fakeExecutor{version: "  codex-cli 0.144.1 \t\r\n"}
+	exec := &fakeExecutor{version: "  codex-cli 0.144.5 \t\r\n"}
 	terminal := terminalOf(runShim(t, exec, cliprotocol.NewRequest("d-1", cliprotocol.MethodDescribe)))
 	if terminal.Type != cliprotocol.TypeDescription {
 		t.Fatalf("surrounding whitespace should be accepted, got %+v", terminal)
@@ -169,13 +169,14 @@ func TestDescribeToleratesSurroundingWhitespace(t *testing.T) {
 
 func TestDescribeRejectsWrongVersions(t *testing.T) {
 	for _, version := range []string{
-		"codex-cli 0.144.0",
-		"codex-cli 0.144.2",
+		"codex-cli 0.144.1",
+		"codex-cli 0.144.4",
+		"codex-cli 0.144.6",
 		"codex-cli 0.145.0",
-		"codex-cli 0.144.1-beta",
-		"codex-cli 0.144.1 nightly",
-		"codex 0.144.1",
-		"0.144.1",
+		"codex-cli 0.144.5-beta",
+		"codex-cli 0.144.5 nightly",
+		"codex 0.144.5",
+		"0.144.5",
 		"",
 	} {
 		exec := &fakeExecutor{version: version}
@@ -195,7 +196,7 @@ func TestDescribeExecutableMissing(t *testing.T) {
 }
 
 func TestDescribeMakesNoModelCall(t *testing.T) {
-	exec := &fakeExecutor{version: "codex-cli 0.144.1"}
+	exec := &fakeExecutor{version: "codex-cli 0.144.5"}
 	runShim(t, exec, cliprotocol.NewRequest("d-1", cliprotocol.MethodDescribe))
 	if exec.gotArgs != nil || exec.modelCalls != 0 {
 		t.Fatalf("describe must not start a run or list models: args=%v models=%d", exec.gotArgs, exec.modelCalls)

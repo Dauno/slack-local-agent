@@ -1,5 +1,4 @@
-{"type":"thread.started","thread_id":"thr_0f1e2d3c"}
+{"type":"thread.started","thread_id":"019f6ba6-defc-7731-b24f-bd91db6cc14b"}
 {"type":"turn.started"}
-{"type":"item.started","item":{"id":"item_0","type":"agent_message"}}
 {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"OK"}}
-{"type":"turn.completed","usage":{"input_tokens":42,"cached_input_tokens":0,"output_tokens":3}}
+{"type":"turn.completed","usage":{"input_tokens":13073,"cached_input_tokens":8960,"output_tokens":5,"reasoning_output_tokens":0}}

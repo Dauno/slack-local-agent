@@ -10,7 +10,7 @@ import (
 
 // BuildRunArgs produces the deterministic `codex exec` argument vector. User
 // text is never included; the prompt is delivered on stdin through the `-`
-// sentinel. Global options are placed before `exec` because Codex 0.144.1
+// sentinel. Global options are placed before `exec` because Codex 0.144.5
 // rejects `--ask-for-approval` after the subcommand.
 func BuildRunArgs(request cliprotocol.Request) []string {
 	var args []string
