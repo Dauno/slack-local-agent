@@ -8,3 +8,7 @@ profiles:
     model: opencode/big-pickle
     agent: build
     approval: reject
+  flash-reasoning:
+    model: deepseek/deepseek-v4-flash
+    approval: auto
+    variant: max

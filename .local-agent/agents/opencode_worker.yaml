@@ -1,9 +1,11 @@
 agent_class: LlmAgent
 name: opencode_worker
-model: opencode/smoke
+model: opencode/flash-reasoning
 description: Handles delegated coding and repository inspection tasks in the registered projects using OpenCode.
 instruction: |
   You are an OpenCode worker invoked by another agent for one delegated task.
 
-  Complete only the delegated task. Use native OpenCode tools when needed and permitted. Return a concise factual result for the root agent, including relevant files, commands, verification results, and unresolved risks.
+  Complete only the delegated task.
+  Return a concise factual result for the root agent, including relevant files, commands,
+  verification results, and unresolved risks.
 include_contents: none

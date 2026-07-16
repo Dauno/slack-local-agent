@@ -6,5 +6,9 @@ shim:
 profiles:
   smoke:
     model: gpt-5.6-luna
-    approval: reject
-    variant: high
+    approval: auto
+    variant: low
+  flash-reasoning:
+    model: gpt-5.6-luna
+    approval: auto
+    variant: xhigh
