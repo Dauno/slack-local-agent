@@ -6,6 +6,21 @@ import (
 	"fmt"
 )
 
+type migrationFunc func(context.Context, *sql.Tx) error
+
+var migrations = map[int]migrationFunc{
+	1:  migrateV1,
+	2:  migrateV2,
+	3:  migrateV3,
+	4:  migrateV4,
+	5:  migrateV5,
+	6:  migrateV6,
+	7:  migrateV7,
+	8:  migrateV8,
+	9:  migrateV9,
+	10: migrateV10,
+}
+
 func migrate(ctx context.Context, db *sql.DB) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -25,49 +40,12 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	}
 
 	for version := current + 1; version <= SchemaVersion; version++ {
-		switch version {
-		case 1:
-			if err := migrateV1(ctx, tx); err != nil {
-				return err
-			}
-		case 2:
-			if err := migrateV2(ctx, tx); err != nil {
-				return err
-			}
-		case 3:
-			if err := migrateV3(ctx, tx); err != nil {
-				return err
-			}
-		case 4:
-			if err := migrateV4(ctx, tx); err != nil {
-				return err
-			}
-		case 5:
-			if err := migrateV5(ctx, tx); err != nil {
-				return err
-			}
-		case 6:
-			if err := migrateV6(ctx, tx); err != nil {
-				return err
-			}
-		case 7:
-			if err := migrateV7(ctx, tx); err != nil {
-				return err
-			}
-		case 8:
-			if err := migrateV8(ctx, tx); err != nil {
-				return err
-			}
-		case 9:
-			if err := migrateV9(ctx, tx); err != nil {
-				return err
-			}
-		case 10:
-			if err := migrateAdkSession(ctx, tx); err != nil {
-				return err
-			}
-		default:
+		fn, ok := migrations[version]
+		if !ok {
 			return fmt.Errorf("no SQLite migration registered for version %d", version)
+		}
+		if err := fn(ctx, tx); err != nil {
+			return err
 		}
 	}
 

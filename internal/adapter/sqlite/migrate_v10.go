@@ -7,15 +7,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const (
-	// ADK v10 migration — durable event-driven session service.
-	adkSchemaVersion = 10
-)
-
-// migrateAdkSession adds the ADK session, event, and application/user state
+// migrateV10 adds the ADK session, event, and application/user state
 // tables required for the durable session.Service implementation.
-func migrateAdkSession(ctx context.Context, tx *sql.Tx) error {
-	return execMigration(ctx, tx, adkSchemaVersion, []string{
+func migrateV10(ctx context.Context, tx *sql.Tx) error {
+	return execMigration(ctx, tx, 10, []string{
 		`CREATE TABLE adk_sessions (
 			app_name TEXT NOT NULL,
 			user_id TEXT NOT NULL,
