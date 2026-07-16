@@ -407,6 +407,31 @@ func TestListDirectoryAcceptsSymlinkWithinRoot(t *testing.T) {
 	}
 }
 
+func TestListDirectoryBoundaryNoTruncation(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"a", "bb", "ccc", "d"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	executor, err := New(map[string]string{"project": root}, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := executor.Execute(context.Background(), sandbox.SandboxOperation{
+		Capability: domain.CapListDirectory, Args: map[string]any{"project": "project", "path": "."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Truncated {
+		t.Fatal("expected truncation because the complete listing exceeds the limit")
+	}
+	if result.Output != "a\nbb\nccc" {
+		t.Fatalf("expected exact-fitting prefix %q, got %q", "a\nbb\nccc", result.Output)
+	}
+}
+
 func TestListDirectoryTruncatesOutput(t *testing.T) {
 	root := t.TempDir()
 	for i := 0; i < 10; i++ {

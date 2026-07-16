@@ -234,7 +234,7 @@ func (e *Executor) listDirectory(args map[string]any) (sandbox.SandboxResult, er
 				truncated = true
 				break
 			}
-			last = end + 1 // past newline if we keep going
+			last = end
 		}
 		output = strings.Join(names, "\n")
 		truncated = true
