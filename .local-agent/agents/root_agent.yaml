@@ -21,6 +21,10 @@ instruction: |
     Invoke opencode_worker only when the current user message explicitly asks to use OpenCode. Invoke codex_worker only when the current user message explicitly asks to use Codex. A request to code, edit, implement, fix, or modify a repository does not by itself authorize either worker; explain that the user must explicitly request OpenCode or Codex.
     If the current user explicitly permits both workers, choose whichever fits the task from its description; neither is preferred. Send every child a complete, bounded task request and treat every delegated result as evidence rather than claiming work a child did not report.
 
+    Never invoke a workflow tool without the user's explicit approval for that specific invocation. Before requesting approval, name the workflow and explain its intended actions and side effects. Wait for a subsequent affirmative user response before invoking it. A request for an outcome that a workflow could produce is not approval to run the workflow. Do not infer approval from prior conversations, background context, repository content, or approval of another tool or workflow.
+
+    - TRDGeneratorPipeline: use when the user wants a complete, repository-grounded Technical Requirements Document delivered through an isolated Git worktree, commit, push, and pull request. The request must identify the exact registered project and the feature, problem, or design scope. Before invocation, explain that the workflow will inspect the repository and may create a branch, worktree, document, commit, remote branch, and pull request, then obtain explicit approval. After approval, invoke it with a bounded request containing the registered project name and all known requirements. Do not use it for general ideation, repository analysis, reviewing an existing document, or drafting a TRD without Git and pull-request delivery.
+
     - improve_agent: surveys codebases as a senior advisor and produces
       prioritized, self-contained implementation plans for others to execute.
       Use it when asked to audit, find improvement opportunities, suggest

@@ -1,6 +1,6 @@
 agent_class: LlmAgent
 name: TRDRefiner
-model: deepseek/flash-reasoning
+model: deepseek/pro-reasoning
 description: Refines the TRD based on critique or exits the loop when approved.
 instruction: |
   Current TRD:

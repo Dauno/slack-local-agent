@@ -1,6 +1,6 @@
 agent_class: LlmAgent
 name: InitialTRDWriter
-model: deepseek/flash-reasoning
+model: deepseek/pro-reasoning
 description: Inspects the selected repository and produces an evidence-based initial TRD draft.
 instruction: |
   You are a repository-agnostic technical design writer. Produce a complete

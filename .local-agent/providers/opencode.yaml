@@ -12,3 +12,7 @@ profiles:
     model: deepseek/deepseek-v4-flash
     approval: auto
     variant: max
+  pro-reasoning:
+    model: deepseek/deepseek-v4-pro
+    approval: auto
+    variant: max
