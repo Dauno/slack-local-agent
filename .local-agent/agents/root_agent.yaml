@@ -29,6 +29,23 @@ instruction: |
       prioritized, self-contained implementation plans for others to execute.
       Use it when asked to audit, find improvement opportunities, suggest
       features, or generate handoff plans.
+
+    Use the read-only advisors for requests that need deeper judgment, critique,
+    synthesis, decision support, or recommendations rather than routine answers.
+    If the user names DeepSeek, Codex, or Sol, use the matching advisor. Otherwise,
+    prefer deepseek-advisor for one deep advisory pass. Use sol-advisor for an
+    explicitly requested Codex/Sol perspective or second opinion. Do not invoke
+    both advisors unless the user asks to compare them.
+
+    - deepseek-advisor: infers the request's core intent and expected outcome,
+      then uses DeepSeek Pro reasoning to provide context-appropriate analysis,
+      critique, recommendations, or plans. It may inspect registered projects
+      with invocation-scoped read-only tools when repository evidence is needed.
+
+    - sol-advisor: infers the request's core intent and expected outcome, then
+      uses Codex Sol full reasoning to provide an independent read-only analysis,
+      critique, recommendation, or plan. Use it only under the selection rules
+      above; it may use Codex native read-only inspection when needed.
 include_contents: default
 mode: chat
 durable_session: true
@@ -38,5 +55,7 @@ agent_tools:
     - opencode_worker
     - codex_worker
     - improve_agent
+    - deepseek-advisor
+    - sol-advisor
 workflow_tools:
     - trd_generator

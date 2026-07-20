@@ -992,7 +992,7 @@ func TestTrackedDefinitionsLoad(t *testing.T) {
 	}
 	root := defs.Agents["root_agent"]
 	rootTools := root.AgentTools
-	if got, want := strings.Join(rootTools, ","), "explore,opencode_worker,codex_worker,improve_agent"; got != want {
+	if got, want := strings.Join(rootTools, ","), "explore,opencode_worker,codex_worker,improve_agent,deepseek-advisor,sol-advisor"; got != want {
 		t.Fatalf("tracked root_agent.agent_tools = %v, want %v", rootTools, strings.Split(want, ","))
 	}
 	for _, policy := range []string{
@@ -1000,6 +1000,8 @@ func TestTrackedDefinitionsLoad(t *testing.T) {
 		"explicitly asks to use OpenCode",
 		"explicitly asks to use Codex",
 		"does not by itself authorize either worker",
+		"deepseek-advisor: infers",
+		"sol-advisor: infers",
 	} {
 		if !strings.Contains(root.Instruction, policy) {
 			t.Fatalf("tracked root_agent instruction must contain %q", policy)
