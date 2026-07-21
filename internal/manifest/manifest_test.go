@@ -23,6 +23,10 @@ func TestRenderIncludesIdentitySocketModeScopesAndEvents(t *testing.T) {
 			Name string `yaml:"name"`
 		} `yaml:"display_information"`
 		Features struct {
+			AppHome struct {
+				MessagesTabEnabled         bool `yaml:"messages_tab_enabled"`
+				MessagesTabReadOnlyEnabled bool `yaml:"messages_tab_read_only_enabled"`
+			} `yaml:"app_home"`
 			BotUser struct {
 				DisplayName string `yaml:"display_name"`
 			} `yaml:"bot_user"`
@@ -51,6 +55,9 @@ func TestRenderIncludesIdentitySocketModeScopesAndEvents(t *testing.T) {
 	}
 	if parsed.Features.BotUser.DisplayName != identity.BotDisplayName {
 		t.Fatalf("bot display name = %q, want %q", parsed.Features.BotUser.DisplayName, identity.BotDisplayName)
+	}
+	if !parsed.Features.AppHome.MessagesTabEnabled || parsed.Features.AppHome.MessagesTabReadOnlyEnabled {
+		t.Fatalf("App Home messages tab must accept user messages: %#v", parsed.Features.AppHome)
 	}
 	if !parsed.Settings.SocketModeEnabled {
 		t.Fatal("Socket Mode is not enabled")

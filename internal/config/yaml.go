@@ -59,6 +59,14 @@ var configSchema = []schemaField{
 		{name: "allowed_team_ids"},
 		{name: "allowed_channel_ids"},
 		{name: "part_labels"},
+		{name: "standard_agent", children: []schemaField{
+			{name: "threaded_dm"},
+			{name: "progress_enabled"},
+			{name: "prompts_enabled"},
+			{name: "suggested_prompts"},
+			{name: "streaming_enabled"},
+			{name: "update_interval_seconds"},
+		}},
 		{name: "context", children: []schemaField{
 			{name: "enabled"},
 			{name: "max_chars"},
@@ -321,6 +329,9 @@ func normalizeCollections(cfg *Config) {
 	}
 	if cfg.Slack.AllowedChannelIDs == nil {
 		cfg.Slack.AllowedChannelIDs = []string{}
+	}
+	if cfg.Slack.StandardAgent.SuggestedPrompts == nil {
+		cfg.Slack.StandardAgent.SuggestedPrompts = []string{}
 	}
 	if cfg.OpenCode.Management.AllowedUserIDs == nil {
 		cfg.OpenCode.Management.AllowedUserIDs = []string{}

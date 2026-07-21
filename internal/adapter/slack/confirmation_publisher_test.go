@@ -93,6 +93,20 @@ func TestNormalizeInteractiveActionReject(t *testing.T) {
 	}
 }
 
+func TestNormalizeInteractiveActionThreadedDMKey(t *testing.T) {
+	t.Parallel()
+	callback := newTestCallback(approveActionID, "wrapper-dm", "T12345678", "U12345678", "D12345678", "1720000001.000001", "1720000000.000000")
+
+	action, ok := normalizeInteractiveAction(&callback)
+	if !ok {
+		t.Fatal("normalizeInteractiveAction returned false for threaded DM")
+	}
+	want := domain.ConversationKey("slack:T12345678:dm:D12345678:thread:1720000000.000000")
+	if action.ConversationKey != want {
+		t.Fatalf("ConversationKey = %q, want %q", action.ConversationKey, want)
+	}
+}
+
 func TestNormalizeInteractiveActionUnknownActionID(t *testing.T) {
 	t.Parallel()
 	callback := newTestCallback("unknown.action", "wrapper-abc", "T12345678", "U12345678", "C12345678", "1720000001.000001", "")

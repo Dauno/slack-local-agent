@@ -234,6 +234,12 @@ func (a *Application) Run(ctx context.Context) error {
 	if rootModel == nil {
 		return redactor.Error(errors.New("model client not initialized"))
 	}
+	if cfg.Slack.StandardAgent.StreamingEnabled {
+		capability, ok := rootModel.(interface{ SupportsStreaming() bool })
+		if !ok || !capability.SupportsStreaming() {
+			return errors.New("standard agent streaming is enabled but the selected root provider does not support true incremental output")
+		}
+	}
 
 	store, err := adaptersqlite.OpenExisting(ctx, paths.DatabaseFile)
 	if err != nil {
@@ -255,6 +261,12 @@ func (a *Application) Run(ctx context.Context) error {
 	}()
 	if err := store.CleanupDedupe(ctx, time.Now().UTC()); err != nil {
 		return redactor.Error(err)
+	}
+	if err := store.EnsureDMIdentityMode(ctx, cfg.Slack.StandardAgent.ThreadedDM); err != nil {
+		if errors.Is(err, adaptersqlite.ErrDMIdentityModeMismatch) {
+			return redactor.Error(fmt.Errorf("%w. Back up local state, then run: local-agent init --reset-state", err))
+		}
+		return redactor.Error(fmt.Errorf("validate durable DM identity mode: %w", err))
 	}
 	if cfg.Memory.Enabled {
 		if err := store.CleanupOutbox(ctx, time.Now().UTC().AddDate(0, 0, -cfg.Memory.RetentionDays)); err != nil {
@@ -298,6 +310,7 @@ func (a *Application) Run(ctx context.Context) error {
 	fileLoader := slackadapter.NewFileLoader(api, botToken, slackTimeout)
 	confirmationPublisher := slackadapter.NewConfirmationPublisher(api, auth.UserID, slackTimeout, logger)
 	blockPublisher := slackadapter.NewBlockPublisher(api, slackTimeout, logger)
+	standardPublisher := slackadapter.NewStandardPublisher(api, auth.UserID, slackTimeout)
 	artifactSvc := artifact.InMemoryService()
 	attachmentInstruction := ""
 	attachmentTimeout := 120 * time.Second
@@ -449,6 +462,12 @@ func (a *Application) Run(ctx context.Context) error {
 		BusyMessage:         cfg.Runtime.BusyMessage,
 		ModelErrorMessage:   cfg.Runtime.ModelErrorMessage,
 		UnauthorizedMessage: cfg.Slack.UnauthorizedMessage,
+		ProgressEnabled:     cfg.Slack.StandardAgent.ProgressEnabled,
+		PromptsEnabled:      cfg.Slack.StandardAgent.PromptsEnabled,
+		SuggestedPrompts:    cfg.Slack.StandardAgent.SuggestedPrompts,
+		StreamingEnabled:    cfg.Slack.StandardAgent.StreamingEnabled,
+		UpdateInterval:      time.Duration(cfg.Slack.StandardAgent.UpdateIntervalSeconds) * time.Second,
+		StreamingCarryRunes: redactor.StreamingCarryRunes(),
 	}, botusecase.Dependencies{
 		Store: store, Runtime: runtime, History: history, Publisher: publisher, Logger: logger, Exchange: store,
 		ModelCalls: modelCalls, SanitizeContent: redactor.String,
@@ -460,6 +479,11 @@ func (a *Application) Run(ctx context.Context) error {
 		AttachmentProc:        attachmentProc,
 		MaxAttachmentBytes:    int64(cfg.Slack.Files.MaxBytesPerFile),
 		MaxAttachmentChars:    cfg.Slack.Files.MaxProcessedChars,
+		StandardStore:         store,
+		ProgressPublisher:     standardPublisher,
+		PromptPublisher:       standardPublisher,
+		StreamingRuntime:      runtime,
+		IncrementalPublisher:  standardPublisher,
 	})
 	if err != nil {
 		return err
@@ -470,6 +494,12 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 	if err := service.ReconcileConfirmations(ctx, history); err != nil {
 		return redactor.Error(fmt.Errorf("reconcile confirmation deliveries: %w", err))
+	}
+	if err := service.ReconcileProgress(ctx); err != nil {
+		return redactor.Error(fmt.Errorf("reconcile standard progress: %w", err))
+	}
+	if err := service.ReconcileIncremental(ctx); err != nil {
+		return redactor.Error(fmt.Errorf("reconcile standard incremental delivery: %w", err))
 	}
 	logger.Info("ADK durable runtime enabled", "session_service", "sqlite")
 
@@ -521,7 +551,7 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 
 	socket := socketmode.New(api, socketmode.OptionLog(sdkLog))
-	listener := slackadapter.NewListener(socket, slackadapter.NewRouter(auth.UserID), logger)
+	listener := slackadapter.NewListener(socket, slackadapter.NewRouter(auth.UserID, cfg.Slack.StandardAgent.ThreadedDM), logger)
 	modelName := cfg.Model.Name
 	if rootDef != nil {
 		resolved, _ := defs.ResolveModel(rootDef.Model)

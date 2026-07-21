@@ -39,6 +39,9 @@ type Invocation struct {
 	UserID      string
 	EventTS     string
 	ThreadTS    string
+	// ThreadedDM selects configured standard-agent DM identity mode. It is never
+	// derived from Slack event data.
+	ThreadedDM  bool
 	Text        string
 	Attachments []Attachment
 	Trigger     Trigger
@@ -115,6 +118,13 @@ func (i Invocation) ConversationKey() (ConversationKey, error) {
 		return "", err
 	}
 	if i.ChannelKind == ChannelDM {
+		if i.ThreadedDM {
+			rootTS := i.EventTS
+			if i.ThreadTS != "" {
+				rootTS = i.ThreadTS
+			}
+			return ConversationKey(fmt.Sprintf("slack:%s:dm:%s:thread:%s", i.TeamID, i.ChannelID, rootTS)), nil
+		}
 		return ConversationKey(fmt.Sprintf("slack:%s:dm:%s", i.TeamID, i.ChannelID)), nil
 	}
 	rootTS := i.EventTS
@@ -132,6 +142,13 @@ type ReplyTarget struct {
 
 func (i Invocation) ReplyTarget() ReplyTarget {
 	if i.ChannelKind == ChannelDM {
+		if i.ThreadedDM {
+			rootTS := i.EventTS
+			if i.ThreadTS != "" {
+				rootTS = i.ThreadTS
+			}
+			return ReplyTarget{ChannelID: i.ChannelID, ThreadTS: rootTS}
+		}
 		return ReplyTarget{ChannelID: i.ChannelID}
 	}
 	rootTS := i.ThreadTS

@@ -19,6 +19,19 @@ import (
 	"github.com/Dauno/slack-local-agent/internal/domain"
 )
 
+func TestSlackMetadataEventTypesUseObservedAcceptedAlphabet(t *testing.T) {
+	for _, eventType := range []string{assistantMetadataEventType, confirmationMetadataEventType} {
+		if eventType == "" || strings.Contains(eventType, ".") {
+			t.Fatalf("metadata event type %q is rejected by Slack", eventType)
+		}
+		for _, r := range eventType {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
+				t.Fatalf("metadata event type %q contains unsupported character %q", eventType, r)
+			}
+		}
+	}
+}
+
 func TestSplitMarkdownSinglePartBelowLimit(t *testing.T) {
 	t.Parallel()
 	short := "Hello world"
@@ -269,7 +282,7 @@ func TestSDKPostClientUsesMarkdownTextAndMetadata(t *testing.T) {
 	if formValues.Get("thread_ts") != testThread || formValues.Get("unfurl_links") != "false" || formValues.Get("unfurl_media") != "false" {
 		t.Fatalf("thread or unfurl controls missing: %v", formValues)
 	}
-	if metadata.EventType != "local_agent.assistant_exchange" {
+	if metadata.EventType != assistantMetadataEventType {
 		t.Fatalf("metadata.EventType = %q", metadata.EventType)
 	}
 	if metadata.EventPayload["correlation_id"] != "intent-correlation" {

@@ -15,7 +15,10 @@ import (
 	"github.com/Dauno/slack-local-agent/internal/secure"
 )
 
-const defaultPace = time.Second
+const (
+	defaultPace                = time.Second
+	assistantMetadataEventType = "local_agent_assistant_exchange"
+)
 
 type postRequest struct {
 	channelID     string
@@ -54,7 +57,7 @@ func (c sdkPostClient) PostMessage(ctx context.Context, req postRequest) (string
 			"content_sha256": req.contentSHA256,
 		}
 		options = append(options, slackapi.MsgOptionMetadata(slackapi.SlackMetadata{
-			EventType:    "local_agent.assistant_exchange",
+			EventType:    assistantMetadataEventType,
 			EventPayload: payload,
 		}))
 	}

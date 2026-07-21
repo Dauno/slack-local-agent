@@ -1,6 +1,8 @@
 package slack
 
 import (
+	"encoding/json"
+	"os"
 	"reflect"
 	"testing"
 
@@ -9,6 +11,18 @@ import (
 
 	"github.com/Dauno/slack-local-agent/internal/domain"
 )
+
+type standardAgentFixture struct {
+	Cases []struct {
+		Name         string          `json:"name"`
+		RetryAttempt int             `json:"retry_attempt"`
+		RetryReason  string          `json:"retry_reason"`
+		Routed       bool            `json:"routed"`
+		WantEventTS  string          `json:"want_event_ts"`
+		WantThreadTS string          `json:"want_thread_ts"`
+		Payload      json.RawMessage `json:"payload"`
+	} `json:"cases"`
+}
 
 const (
 	testBot     = "U00000001"
@@ -172,6 +186,61 @@ func TestRouterUsesCallbackEventIDAndTeamFallback(t *testing.T) {
 	}
 	if got.EventID != testEventID || got.TeamID != testTeam {
 		t.Fatalf("Route() IDs = event %q team %q", got.EventID, got.TeamID)
+	}
+}
+
+func TestRouterMarksDMThreadedOnlyWhenConfigured(t *testing.T) {
+	t.Parallel()
+	event := callbackEvent(slackevents.Message, &slackevents.MessageEvent{
+		Type: "message", User: testUser, Text: "hola", TimeStamp: testTS,
+		Channel: testDM, ChannelType: slackevents.ChannelTypeIM,
+	})
+
+	legacy, ok := NewRouter(testBot).Route(event)
+	if !ok || legacy.ThreadedDM {
+		t.Fatalf("legacy DM invocation = %#v, routed=%v", legacy, ok)
+	}
+	threaded, ok := NewRouter(testBot, true).Route(event)
+	if !ok || !threaded.ThreadedDM {
+		t.Fatalf("threaded DM invocation = %#v, routed=%v", threaded, ok)
+	}
+}
+
+func TestRouterMatchesObservedStandardDMAgentFixtures(t *testing.T) {
+	t.Parallel()
+	encoded, err := os.ReadFile("testdata/standard_agent_message_im.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture standardAgentFixture
+	if err := json.Unmarshal(encoded, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter("U00000001", true)
+	var rootDedupe []string
+	for _, testCase := range fixture.Cases {
+		t.Run(testCase.Name, func(t *testing.T) {
+			event, err := slackevents.ParseEvent(testCase.Payload, slackevents.OptionNoVerifyToken())
+			if err != nil {
+				t.Fatal(err)
+			}
+			invocation, routed := router.Route(event)
+			if routed != testCase.Routed {
+				t.Fatalf("Route() routed=%v invocation=%#v", routed, invocation)
+			}
+			if !routed {
+				return
+			}
+			if invocation.EventTS != testCase.WantEventTS || invocation.ThreadTS != testCase.WantThreadTS || !invocation.ThreadedDM {
+				t.Fatalf("Route() invocation=%#v", invocation)
+			}
+			if testCase.Name == "root" {
+				rootDedupe = invocation.DedupeKeys()
+			}
+			if testCase.Name == "root_retry_after_timeout" && !reflect.DeepEqual(invocation.DedupeKeys(), rootDedupe) {
+				t.Fatalf("retry dedupe keys=%v, root=%v", invocation.DedupeKeys(), rootDedupe)
+			}
+		})
 	}
 }
 

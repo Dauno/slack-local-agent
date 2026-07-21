@@ -1,0 +1,34 @@
+{
+  "observed_on": "2026-07-21",
+  "transport": "standard Slack chat.postMessage/chat.update",
+  "cases": [
+    {
+      "name": "metadata event type containing dots",
+      "event_type": "local_agent.standard_spike",
+      "ok": true,
+      "warning": "invalid_metadata_schema",
+      "metadata_persisted": false
+    },
+    {
+      "name": "metadata event type using underscores",
+      "event_type": "local_agent_standard_spike",
+      "ok": true,
+      "metadata_persisted": true,
+      "visible_in": ["post response", "update response", "conversation replies", "message event"]
+    },
+    {
+      "name": "bounded update",
+      "unicode_code_points": 11900,
+      "interval_seconds": 3,
+      "ok": true,
+      "edited_marker_visible": true,
+      "rate_limited": false
+    },
+    {
+      "name": "oversized update",
+      "unicode_code_points": 12001,
+      "ok": false,
+      "error": "msg_too_long"
+    }
+  ]
+}

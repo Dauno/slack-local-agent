@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Dauno/slack-local-agent/internal/domain"
 	"github.com/Dauno/slack-local-agent/internal/port"
 )
 
@@ -97,5 +98,28 @@ func TestConfirmationStoreRejectDeliveryIsSingleUse(t *testing.T) {
 	}
 	if err := confirmations.RejectDelivery(ctx, "wrapper"); err == nil {
 		t.Fatal("second RejectDelivery() unexpectedly succeeded")
+	}
+}
+
+func TestConfirmationStoreRestoresThreadedDMConversationKey(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t)
+	confirmations := NewConfirmationStore(store)
+	delivery := port.ConfirmationDelivery{
+		WrapperCallID: "threaded-wrapper", OriginalCallID: "original",
+		SessionID: "adk:slack:T12345678:dm:D12345678:thread:1700000000.000001",
+		Actor:     "U12345678", TeamID: "T12345678", ChannelID: "D12345678",
+		ThreadTS: "1700000000.000001", Expiry: time.Now().Add(time.Hour),
+	}
+	if err := confirmations.CreateDelivery(ctx, delivery); err != nil {
+		t.Fatal(err)
+	}
+	got, err := confirmations.GetByWrapperCallID(ctx, delivery.WrapperCallID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "slack:T12345678:dm:D12345678:thread:1700000000.000001"
+	if got == nil || got.ConversationKey != domain.ConversationKey(want) {
+		t.Fatalf("ConversationKey = %q, want %q", got.ConversationKey, want)
 	}
 }

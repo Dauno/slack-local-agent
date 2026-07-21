@@ -19,7 +19,7 @@ const (
 	confirmationRenderMode        = "confirmation_v1"
 	approveActionID               = "local_agent.confirm.approve"
 	rejectActionID                = "local_agent.confirm.reject"
-	confirmationMetadataEventType = "local_agent.confirmation_prompt"
+	confirmationMetadataEventType = "local_agent_confirmation_prompt"
 )
 
 var slackMessageTimestampPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
@@ -355,8 +355,12 @@ func normalizeInteractiveAction(callback *slackapi.InteractionCallback) (domain.
 		}
 	}
 
-	if threadTS == "" {
-		key = domain.ConversationKey(fmt.Sprintf("slack:%s:dm:%s", teamID, channelID))
+	if channelID[0] == 'D' {
+		if threadTS == "" {
+			key = domain.ConversationKey(fmt.Sprintf("slack:%s:dm:%s", teamID, channelID))
+		} else {
+			key = domain.ConversationKey(fmt.Sprintf("slack:%s:dm:%s:thread:%s", teamID, channelID, threadTS))
+		}
 	} else {
 		key = domain.ConversationKey(fmt.Sprintf("slack:%s:channel:%s:thread:%s", teamID, channelID, threadTS))
 	}

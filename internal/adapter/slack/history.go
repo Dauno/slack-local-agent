@@ -29,21 +29,23 @@ type sdkHistoryClient struct {
 
 func (c sdkHistoryClient) ConversationReplies(ctx context.Context, channelID, rootTS, latest string, limit int) ([]slackapi.Message, error) {
 	messages, _, _, err := c.client.GetConversationRepliesContext(ctx, &slackapi.GetConversationRepliesParameters{
-		ChannelID: channelID,
-		Timestamp: rootTS,
-		Latest:    latest,
-		Inclusive: true,
-		Limit:     limit,
+		ChannelID:          channelID,
+		Timestamp:          rootTS,
+		Latest:             latest,
+		Inclusive:          true,
+		Limit:              limit,
+		IncludeAllMetadata: true,
 	})
 	return messages, err
 }
 
 func (c sdkHistoryClient) ConversationHistory(ctx context.Context, channelID, latest string, limit int) ([]slackapi.Message, error) {
 	response, err := c.client.GetConversationHistoryContext(ctx, &slackapi.GetConversationHistoryParameters{
-		ChannelID: channelID,
-		Latest:    latest,
-		Inclusive: true,
-		Limit:     limit,
+		ChannelID:          channelID,
+		Latest:             latest,
+		Inclusive:          true,
+		Limit:              limit,
+		IncludeAllMetadata: true,
 	})
 	if err != nil {
 		return nil, err
@@ -103,7 +105,7 @@ func (r *HistoryReader) RecentHistory(ctx context.Context, invocation domain.Inv
 		messages []slackapi.Message
 		err      error
 	)
-	if invocation.ChannelKind == domain.ChannelDM {
+	if invocation.ChannelKind == domain.ChannelDM && !invocation.ThreadedDM {
 		messages, err = r.client.ConversationHistory(callCtx, invocation.ChannelID, invocation.EventTS, limits.MaxMessages)
 		if len(messages) > limits.MaxMessages {
 			messages = messages[:limits.MaxMessages]
@@ -153,7 +155,7 @@ func (r *HistoryReader) FindPublishedAssistantExchange(ctx context.Context, inte
 		messages []slackapi.Message
 		err      error
 	)
-	if intent.ChannelKind == domain.ChannelDM {
+	if intent.ChannelKind == domain.ChannelDM && intent.RootTS == "" {
 		messages, err = r.client.ConversationHistory(callCtx, intent.ChannelID, "", recoveryHistoryLimit)
 	} else {
 		if intent.RootTS == "" {
@@ -176,7 +178,7 @@ func (r *HistoryReader) FindPublishedAssistantExchange(ctx context.Context, inte
 
 	matched := make([]slackapi.Message, 0, len(expectedParts))
 	for _, message := range messages {
-		if message.Metadata.EventType != "local_agent.assistant_exchange" {
+		if message.Metadata.EventType != assistantMetadataEventType {
 			continue
 		}
 		md := parseExchangeMetadata(message)
@@ -251,7 +253,7 @@ func findPublishedStructuredExchange(messages []slackapi.Message, botUserID stri
 
 	matched := make([]slackapi.Message, 0, len(parts))
 	for _, message := range messages {
-		if message.Metadata.EventType != "local_agent.assistant_exchange" {
+		if message.Metadata.EventType != assistantMetadataEventType {
 			continue
 		}
 		metadata := parseExchangeMetadata(message)
@@ -332,6 +334,10 @@ func mapHistory(messages []slackapi.Message, botUserID string, maxChars int) por
 	history := port.History{Messages: make([]domain.Message, 0, len(messages))}
 	for _, message := range messages {
 		if message.User == "" || message.Hidden || message.Edited != nil || len(message.Files) != 0 {
+			continue
+		}
+		switch message.Metadata.EventType {
+		case progressMetadataEventType, promptMetadataEventType, confirmationMetadataEventType:
 			continue
 		}
 

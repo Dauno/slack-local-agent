@@ -160,6 +160,63 @@ func TestOpenExistingRejectsFutureSchema(t *testing.T) {
 	}
 }
 
+func TestOpenExistingUpgradesV14WithoutReset(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v14.db")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dsn, err := dataSourceName(path, "rw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := raw.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for version := 1; version <= 14; version++ {
+		if err := migrations[version](ctx, tx); err != nil {
+			t.Fatalf("migration %d: %v", version, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO conversations (
+			conversation_key, team_id, channel_id, channel_kind, root_ts,
+			last_ts, created_at, updated_at
+		) VALUES ('slack:T12345678:dm:D12345678', 'T12345678', 'D12345678', 'dm', '', '1.1', 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, "PRAGMA user_version = 14"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenExisting(ctx, path)
+	if err != nil {
+		t.Fatalf("OpenExisting() error = %v", err)
+	}
+	defer store.Close()
+	if err := store.EnsureDMIdentityMode(ctx, false); err != nil {
+		t.Fatalf("EnsureDMIdentityMode(false) error = %v", err)
+	}
+	var conversationCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM conversations`).Scan(&conversationCount); err != nil {
+		t.Fatal(err)
+	}
+	if conversationCount != 1 {
+		t.Fatalf("conversation count = %d, want 1", conversationCount)
+	}
+}
+
 func TestOpenExistingUpgradesV3OutboxWithSourceSnapshot(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "v3.db")

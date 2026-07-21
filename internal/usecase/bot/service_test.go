@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -314,6 +315,124 @@ type fakePublisher struct {
 	onPublish func()
 }
 
+type fakeStandardExperience struct {
+	operation         *domain.ProgressOperation
+	states            []domain.ProgressState
+	progressOut       []domain.ProgressState
+	promptCalls       int
+	promptClaim       bool
+	incremental       *domain.IncrementalOperation
+	createdText       string
+	updatedText       string
+	finalText         string
+	interrupted       string
+	incrementalStates []domain.IncrementalStatus
+	createErr         error
+}
+
+func (f *fakeStandardExperience) CreateProgress(_ context.Context, operation domain.ProgressOperation) error {
+	f.operation = &operation
+	return nil
+}
+func (f *fakeStandardExperience) MarkProgressPublished(_ context.Context, _ string, messageTS string) error {
+	f.operation.MessageTS = messageTS
+	return nil
+}
+func (f *fakeStandardExperience) SetProgressState(_ context.Context, _ string, state domain.ProgressState, _ time.Time) error {
+	f.states = append(f.states, state)
+	if f.operation != nil {
+		f.operation.State = state
+	}
+	return nil
+}
+func (f *fakeStandardExperience) ListRecoverableProgress(context.Context) ([]domain.ProgressOperation, error) {
+	if f.operation == nil {
+		return nil, nil
+	}
+	return []domain.ProgressOperation{*f.operation}, nil
+}
+func (f *fakeStandardExperience) FindWaitingProgress(context.Context, domain.ConversationKey) (*domain.ProgressOperation, error) {
+	return f.operation, nil
+}
+func (f *fakeStandardExperience) ClaimSuggestedPrompts(context.Context, string, string, domain.ConversationKey, time.Time) (string, bool, error) {
+	if f.promptClaim {
+		return "prompts-1", false, nil
+	}
+	f.promptClaim = true
+	return "prompts-1", true, nil
+}
+func (*fakeStandardExperience) MarkSuggestedPromptsPublished(context.Context, string, string, time.Time) error {
+	return nil
+}
+func (f *fakeStandardExperience) PrepareIncremental(_ context.Context, operation domain.IncrementalOperation) error {
+	f.incremental = &operation
+	return nil
+}
+func (f *fakeStandardExperience) MarkIncrementalCreated(_ context.Context, _, messageTS string, _ time.Time) error {
+	f.incremental.MessageTS = messageTS
+	return nil
+}
+func (f *fakeStandardExperience) AdvanceIncremental(_ context.Context, _ string, status domain.IncrementalStatus, sequence int, digest string, _ time.Time) error {
+	f.incrementalStates = append(f.incrementalStates, status)
+	if f.incremental != nil {
+		f.incremental.Status, f.incremental.Sequence, f.incremental.PrefixDigest = status, sequence, digest
+	}
+	return nil
+}
+func (*fakeStandardExperience) ListUnfinishedIncremental(context.Context) ([]domain.IncrementalOperation, error) {
+	return nil, nil
+}
+func (f *fakeStandardExperience) PublishProgress(_ context.Context, _ domain.ReplyTarget, operation domain.ProgressOperation) (port.PublishedResponse, error) {
+	f.progressOut = append(f.progressOut, operation.State)
+	return port.PublishedResponse{LastMessageTS: "1700000001.000001"}, nil
+}
+func (f *fakeStandardExperience) UpdateProgress(_ context.Context, operation domain.ProgressOperation) error {
+	f.progressOut = append(f.progressOut, operation.State)
+	return nil
+}
+func (*fakeStandardExperience) RecoverProgress(context.Context, domain.ProgressOperation) (port.PublishedResponse, bool, error) {
+	return port.PublishedResponse{}, false, nil
+}
+func (f *fakeStandardExperience) PublishSuggestedPrompts(context.Context, domain.ReplyTarget, string, []string) (port.PublishedResponse, error) {
+	f.promptCalls++
+	return port.PublishedResponse{LastMessageTS: "1700000001.000002"}, nil
+}
+func (f *fakeStandardExperience) CreateIncremental(_ context.Context, _ domain.ReplyTarget, operation domain.IncrementalOperation, text string) (port.PublishedResponse, error) {
+	f.createdText = text
+	f.incremental = &operation
+	if f.createErr != nil {
+		return port.PublishedResponse{}, f.createErr
+	}
+	return port.PublishedResponse{LastMessageTS: "1700000001.000003"}, nil
+}
+func (f *fakeStandardExperience) UpdateIncremental(_ context.Context, operation domain.IncrementalOperation, text string) error {
+	f.incremental, f.updatedText = &operation, text
+	return nil
+}
+func (f *fakeStandardExperience) FinalizeIncremental(_ context.Context, operation domain.IncrementalOperation, text, _ string) error {
+	f.incremental, f.finalText = &operation, text
+	return nil
+}
+func (f *fakeStandardExperience) InterruptIncremental(_ context.Context, operation domain.IncrementalOperation, text string) error {
+	f.incremental, f.interrupted = &operation, text
+	return nil
+}
+func (*fakeStandardExperience) RecoverIncremental(context.Context, domain.IncrementalOperation) (port.PublishedResponse, bool, error) {
+	return port.PublishedResponse{}, false, nil
+}
+
+type fakeStreamingRuntime struct {
+	events []port.AgentStreamEvent
+}
+
+func (r *fakeStreamingRuntime) Stream(_ context.Context, _ port.AgentRequest, yield func(port.AgentStreamEvent) bool) {
+	for _, event := range r.events {
+		if !yield(event) {
+			return
+		}
+	}
+}
+
 type fakeStructuredPublisher struct {
 	calls         int
 	target        domain.ReplyTarget
@@ -423,6 +542,129 @@ func TestHandleAuthorizedDM(t *testing.T) {
 	}
 	if len(publisher.calls) != 1 || publisher.calls[0].target.ThreadTS != "" || publisher.calls[0].text != "answer" {
 		t.Fatalf("unexpected publishes: %#v", publisher.calls)
+	}
+}
+
+func TestHandleStandardDMProgressReachesTerminalState(t *testing.T) {
+	store := &fakeStore{recent: make(map[domain.ConversationKey][]domain.Message)}
+	standard := &fakeStandardExperience{}
+	service := newTestService(t, store, &fakeRuntime{runTurn: port.AgentTurn{Text: "answer"}}, &fakeHistory{}, &fakePublisher{}, nil)
+	service.cfg.ProgressEnabled = true
+	service.standardStore = standard
+	service.progressPublisher = standard
+	invocation := botInvocation()
+	invocation.ThreadedDM = true
+
+	outcome, err := service.Handle(t.Context(), invocation)
+	if err != nil || outcome != OutcomeResponded {
+		t.Fatalf("outcome=%q err=%v", outcome, err)
+	}
+	want := []domain.ProgressState{domain.ProgressWorking, domain.ProgressFinalizing, domain.ProgressCleared}
+	if !reflect.DeepEqual(standard.progressOut, want) || !reflect.DeepEqual(standard.states, []domain.ProgressState{domain.ProgressFinalizing, domain.ProgressCleared}) {
+		t.Fatalf("visible=%v durable=%v", standard.progressOut, standard.states)
+	}
+}
+
+func TestHandleStandardDMSuggestedPromptsOnlyOnceForRoot(t *testing.T) {
+	store := &fakeStore{claimAll: true, recent: make(map[domain.ConversationKey][]domain.Message)}
+	standard := &fakeStandardExperience{}
+	service := newTestService(t, store, &fakeRuntime{runTurn: port.AgentTurn{Text: "answer"}}, &fakeHistory{}, &fakePublisher{}, nil)
+	service.cfg.PromptsEnabled = true
+	service.cfg.SuggestedPrompts = []string{"Ask one thing"}
+	service.standardStore = standard
+	service.promptPublisher = standard
+	first := botInvocation()
+	first.ThreadedDM = true
+	if outcome, err := service.Handle(t.Context(), first); err != nil || outcome != OutcomeResponded {
+		t.Fatalf("first outcome=%q err=%v", outcome, err)
+	}
+	second := first
+	second.EventID, second.EventTS = "Ev2", "1700000002.000002"
+	if outcome, err := service.Handle(t.Context(), second); err != nil || outcome != OutcomeResponded {
+		t.Fatalf("second outcome=%q err=%v", outcome, err)
+	}
+	if standard.promptCalls != 1 {
+		t.Fatalf("prompt publishes=%d, want 1", standard.promptCalls)
+	}
+}
+
+func TestHandleStreamingDMFinalizesOneIncrementalMessage(t *testing.T) {
+	text := strings.Repeat("a", 200) + " done"
+	stream := &fakeStreamingRuntime{events: []port.AgentStreamEvent{
+		{Kind: port.AgentStreamTextDelta, TextDelta: strings.Repeat("a", 200)},
+		{Kind: port.AgentStreamTextDelta, TextDelta: " done"},
+		{Kind: port.AgentStreamCompleted, Turn: &port.AgentTurn{Text: text}},
+	}}
+	store := &fakeStore{recent: make(map[domain.ConversationKey][]domain.Message)}
+	standard := &fakeStandardExperience{}
+	regular := &fakePublisher{}
+	service := newTestService(t, store, &fakeRuntime{}, &fakeHistory{}, regular, nil)
+	service.cfg.StreamingEnabled = true
+	service.cfg.UpdateInterval = 3 * time.Second
+	service.cfg.StreamingCarryRunes = 128
+	service.streamingRuntime = stream
+	service.standardStore = standard
+	service.incrementalPublisher = standard
+	invocation := botInvocation()
+	invocation.ThreadedDM = true
+
+	outcome, err := service.Handle(t.Context(), invocation)
+	if err != nil || outcome != OutcomeResponded {
+		t.Fatalf("outcome=%q err=%v", outcome, err)
+	}
+	if standard.createdText == "" || standard.finalText != text || standard.interrupted != "" || len(regular.calls) != 0 {
+		t.Fatalf("standard=%#v regular=%#v", standard, regular.calls)
+	}
+	if len(store.appended) != 2 || store.appended[1].Role != domain.RoleAssistant || store.appended[1].Content != text {
+		t.Fatalf("persisted=%#v", store.appended)
+	}
+}
+
+func TestHandleStreamingErrorAfterVisibleOutputDoesNotPostReplacement(t *testing.T) {
+	stream := &fakeStreamingRuntime{events: []port.AgentStreamEvent{
+		{Kind: port.AgentStreamTextDelta, TextDelta: strings.Repeat("a", 200)},
+		{Kind: port.AgentStreamError, Err: errors.New("stream disconnected")},
+	}}
+	store := &fakeStore{recent: make(map[domain.ConversationKey][]domain.Message)}
+	standard := &fakeStandardExperience{}
+	regular := &fakePublisher{}
+	service := newTestService(t, store, &fakeRuntime{}, &fakeHistory{}, regular, nil)
+	service.cfg.StreamingEnabled = true
+	service.cfg.UpdateInterval = 3 * time.Second
+	service.cfg.StreamingCarryRunes = 128
+	service.streamingRuntime = stream
+	service.standardStore = standard
+	service.incrementalPublisher = standard
+	invocation := botInvocation()
+	invocation.ThreadedDM = true
+
+	outcome, err := service.Handle(t.Context(), invocation)
+	if err != nil || outcome != OutcomeModelFailed {
+		t.Fatalf("outcome=%q err=%v", outcome, err)
+	}
+	if standard.createdText == "" || !strings.Contains(standard.interrupted, "Interrupted") || len(regular.calls) != 0 {
+		t.Fatalf("standard=%#v regular=%#v", standard, regular.calls)
+	}
+}
+
+func TestHandleAmbiguousIncrementalCreateDoesNotPostReplacement(t *testing.T) {
+	stream := &fakeStreamingRuntime{events: []port.AgentStreamEvent{{Kind: port.AgentStreamTextDelta, TextDelta: strings.Repeat("a", 200)}}}
+	store := &fakeStore{recent: make(map[domain.ConversationKey][]domain.Message)}
+	standard := &fakeStandardExperience{createErr: errors.New("connection closed after acceptance")}
+	regular := &fakePublisher{}
+	service := newTestService(t, store, &fakeRuntime{}, &fakeHistory{}, regular, nil)
+	service.cfg.StreamingEnabled = true
+	service.cfg.UpdateInterval = 3 * time.Second
+	service.cfg.StreamingCarryRunes = 128
+	service.streamingRuntime = stream
+	service.standardStore = standard
+	service.incrementalPublisher = standard
+	invocation := botInvocation()
+	invocation.ThreadedDM = true
+
+	outcome, err := service.Handle(t.Context(), invocation)
+	if err != nil || outcome != OutcomePublishFailed || len(regular.calls) != 0 {
+		t.Fatalf("outcome=%q err=%v replacement=%#v", outcome, err, regular.calls)
 	}
 }
 

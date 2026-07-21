@@ -12,13 +12,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 14
+const SchemaVersion = 17
 
 var (
-	ErrDatabaseNotFound = errors.New("SQLite database not found")
-	ErrFutureSchema     = errors.New("SQLite schema is newer than this local-agent version")
-	ErrStateResetNeeded = errors.New("SQLite schema requires state reset")
-	ErrMetadataConflict = errors.New("conversation metadata conflicts with the canonical key")
+	ErrDatabaseNotFound       = errors.New("SQLite database not found")
+	ErrFutureSchema           = errors.New("SQLite schema is newer than this local-agent version")
+	ErrStateResetNeeded       = errors.New("SQLite schema requires state reset")
+	ErrMetadataConflict       = errors.New("conversation metadata conflicts with the canonical key")
+	ErrDMIdentityModeMismatch = errors.New("durable DM identity mode differs from configured mode")
 )
 
 type FutureSchemaError struct {

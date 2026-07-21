@@ -93,6 +93,7 @@ type fakeLLM struct {
 	mu       sync.Mutex
 	requests []requestView
 	response func(*model.LLMRequest) string
+	stream   []string
 	err      error
 }
 
@@ -107,6 +108,17 @@ func (f *fakeLLM) GenerateContent(_ context.Context, request *model.LLMRequest, 
 			yield(nil, f.err)
 			return
 		}
+		if stream && len(f.stream) > 0 {
+			var complete strings.Builder
+			for _, delta := range f.stream {
+				complete.WriteString(delta)
+				if !yield(&model.LLMResponse{Content: genai.NewContentFromText(delta, genai.RoleModel), Partial: true}, nil) {
+					return
+				}
+			}
+			yield(&model.LLMResponse{Content: genai.NewContentFromText(complete.String(), genai.RoleModel), TurnComplete: true}, nil)
+			return
+		}
 		text := "response"
 		if f.response != nil {
 			text = f.response(request)
@@ -115,6 +127,32 @@ func (f *fakeLLM) GenerateContent(_ context.Context, request *model.LLMRequest, 
 			Content:      genai.NewContentFromText(text, genai.RoleModel),
 			TurnComplete: true,
 		}, nil)
+	}
+}
+
+func TestRuntimeStreamYieldsTypedDeltasAndAuthoritativeCompletion(t *testing.T) {
+	llm := &fakeLLM{stream: []string{"Hel", "lo"}}
+	runtime, err := NewRuntime(RuntimeConfig{AgentName: "Dev Agent", Model: llm, SessionService: session.InMemoryService()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []port.AgentStreamEvent
+	runtime.Stream(t.Context(), port.AgentRequest{
+		ConversationKey: "slack:T12345678:dm:D12345678:thread:1700000000.000001",
+		Messages:        []domain.Message{{Role: domain.RoleUser, UserID: "U12345678", Content: "hello"}},
+	}, func(event port.AgentStreamEvent) bool {
+		events = append(events, event)
+		return true
+	})
+	if len(events) != 3 || events[0].Kind != port.AgentStreamTextDelta || events[0].TextDelta != "Hel" || events[1].TextDelta != "lo" {
+		t.Fatalf("events=%#v", events)
+	}
+	if events[2].Kind != port.AgentStreamCompleted || events[2].Turn == nil || events[2].Turn.Text != "Hello" {
+		t.Fatalf("completion=%#v", events[2])
+	}
+	requests := llm.recorded()
+	if len(requests) != 1 || !requests[0].stream {
+		t.Fatalf("requests=%#v", requests)
 	}
 }
 

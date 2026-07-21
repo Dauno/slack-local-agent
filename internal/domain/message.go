@@ -32,7 +32,7 @@ type ConversationMetadata struct {
 
 func MetadataFor(i Invocation, key ConversationKey) ConversationMetadata {
 	rootTS := i.EventTS
-	if i.ChannelKind == ChannelDM {
+	if i.ChannelKind == ChannelDM && !i.ThreadedDM {
 		rootTS = ""
 	} else if i.ThreadTS != "" {
 		rootTS = i.ThreadTS

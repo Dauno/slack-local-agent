@@ -149,7 +149,7 @@ func TestBlockPublisherPublishWithCorrelationID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if fake.metadata.EventType != "local_agent.assistant_exchange" {
+	if fake.metadata.EventType != assistantMetadataEventType {
 		t.Fatalf("expected assistant_exchange metadata, got %q", fake.metadata.EventType)
 	}
 	if fake.metadata.EventPayload["correlation_id"] != "test-correlation" {

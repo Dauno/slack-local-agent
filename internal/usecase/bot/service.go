@@ -31,6 +31,12 @@ type Config struct {
 	ModelErrorMessage   string
 	UnauthorizedMessage string
 	DedupeTTL           time.Duration
+	ProgressEnabled     bool
+	PromptsEnabled      bool
+	SuggestedPrompts    []string
+	StreamingEnabled    bool
+	UpdateInterval      time.Duration
+	StreamingCarryRunes int
 }
 
 type Dependencies struct {
@@ -53,6 +59,11 @@ type Dependencies struct {
 	AttachmentProc        port.AttachmentProcessor
 	MaxAttachmentBytes    int64
 	MaxAttachmentChars    int
+	StandardStore         port.StandardExperienceStore
+	ProgressPublisher     port.ProgressPublisher
+	PromptPublisher       port.SuggestedPromptPublisher
+	StreamingRuntime      port.StreamingAgentRuntime
+	IncrementalPublisher  port.IncrementalPublisher
 }
 
 type Outcome string
@@ -89,6 +100,11 @@ type Service struct {
 	attachmentProc        port.AttachmentProcessor
 	maxAttachmentBytes    int64
 	maxAttachmentChars    int
+	standardStore         port.StandardExperienceStore
+	progressPublisher     port.ProgressPublisher
+	promptPublisher       port.SuggestedPromptPublisher
+	streamingRuntime      port.StreamingAgentRuntime
+	incrementalPublisher  port.IncrementalPublisher
 }
 
 func New(cfg Config, deps Dependencies) (*Service, error) {
@@ -130,6 +146,20 @@ func New(cfg Config, deps Dependencies) (*Service, error) {
 			return nil, errors.New("attachment limits must be positive")
 		}
 	}
+	if cfg.ProgressEnabled && (deps.StandardStore == nil || deps.ProgressPublisher == nil) {
+		return nil, errors.New("standard experience store and progress publisher are required when progress is enabled")
+	}
+	if cfg.PromptsEnabled && (deps.StandardStore == nil || deps.PromptPublisher == nil || len(cfg.SuggestedPrompts) == 0) {
+		return nil, errors.New("standard experience store, prompt publisher, and prompts are required when prompts are enabled")
+	}
+	if cfg.StreamingEnabled {
+		if deps.StandardStore == nil || deps.StreamingRuntime == nil || deps.IncrementalPublisher == nil {
+			return nil, errors.New("streaming runtime, incremental publisher, and standard experience store are required when streaming is enabled")
+		}
+		if cfg.UpdateInterval < 3*time.Second || cfg.StreamingCarryRunes <= 0 {
+			return nil, errors.New("streaming update interval and carry buffer are invalid")
+		}
+	}
 	if deps.Clock == nil {
 		deps.Clock = systemClock{}
 	}
@@ -151,8 +181,13 @@ func New(cfg Config, deps Dependencies) (*Service, error) {
 		confirmationPublisher: deps.ConfirmationPublisher,
 		structuredPublisher:   deps.StructuredPublisher,
 		fileLoader:            deps.FileLoader, attachmentProc: deps.AttachmentProc,
-		maxAttachmentBytes: deps.MaxAttachmentBytes,
-		maxAttachmentChars: deps.MaxAttachmentChars,
+		maxAttachmentBytes:   deps.MaxAttachmentBytes,
+		maxAttachmentChars:   deps.MaxAttachmentChars,
+		standardStore:        deps.StandardStore,
+		progressPublisher:    deps.ProgressPublisher,
+		promptPublisher:      deps.PromptPublisher,
+		streamingRuntime:     deps.StreamingRuntime,
+		incrementalPublisher: deps.IncrementalPublisher,
 	}, nil
 }
 
@@ -193,6 +228,7 @@ func (s *Service) Handle(ctx context.Context, invocation domain.Invocation) (Out
 	if err != nil {
 		return "", err
 	}
+	s.presentSuggestedPrompts(ctx, invocation, key)
 
 	var recovered port.History
 	if invocation.Trigger == domain.TriggerThreadReply {
@@ -306,11 +342,15 @@ func (s *Service) Handle(ctx context.Context, invocation domain.Invocation) (Out
 		return OutcomeBusy, nil
 	}
 	s.logger.Info("model call started", "conversation_key", key, "event_id", invocation.EventID)
+	progress := s.beginProgress(ctx, invocation, key)
+	if s.cfg.StreamingEnabled {
+		return s.handleStreamingTurn(ctx, modelCtx, cancel, invocation, key, modelContext, memory, agentContext, metadata, modelRelease, progress)
+	}
 
-	return s.handleRuntimeTurn(ctx, modelCtx, cancel, invocation, key, modelContext, memory, agentContext, metadata, modelRelease)
+	return s.handleRuntimeTurn(ctx, modelCtx, cancel, invocation, key, modelContext, memory, agentContext, metadata, modelRelease, progress)
 }
 
-func (s *Service) handleRuntimeTurn(ctx context.Context, modelCtx context.Context, cancel func(), invocation domain.Invocation, key domain.ConversationKey, modelContext []domain.Message, memory []domain.MemorySnippet, agentContext domain.AgentContext, metadata domain.ConversationMetadata, modelRelease func()) (Outcome, error) {
+func (s *Service) handleRuntimeTurn(ctx context.Context, modelCtx context.Context, cancel func(), invocation domain.Invocation, key domain.ConversationKey, modelContext []domain.Message, memory []domain.MemorySnippet, agentContext domain.AgentContext, metadata domain.ConversationMetadata, modelRelease func(), progress *domain.ProgressOperation) (Outcome, error) {
 	turn, modelErr := func() (port.AgentTurn, error) {
 		defer modelRelease()
 		return s.runtime.Run(modelCtx, port.AgentRequest{
@@ -322,6 +362,7 @@ func (s *Service) handleRuntimeTurn(ctx context.Context, modelCtx context.Contex
 	}()
 	cancel()
 	if modelErr != nil {
+		s.updateProgress(ctx, progress, domain.ProgressFailed)
 		s.logger.Error("model call failed", "conversation_key", key, "error", modelErr)
 		if _, err := s.publisher.Publish(ctx, invocation.ReplyTarget(), s.cfg.ModelErrorMessage); err != nil {
 			s.logger.Error("model error response failed", "conversation_key", key, "error", err)
@@ -332,14 +373,150 @@ func (s *Service) handleRuntimeTurn(ctx context.Context, modelCtx context.Contex
 	s.logger.Info("model call completed", "conversation_key", key, "event_id", invocation.EventID)
 
 	if turn.PendingConfirmation != nil {
-		return s.handlePendingConfirmation(ctx, invocation, key, turn)
+		s.updateProgress(ctx, progress, domain.ProgressWaitingConfirmation)
+		outcome, err := s.handlePendingConfirmation(ctx, invocation, key, turn)
+		if outcome != OutcomeResponded || err != nil {
+			s.updateProgress(ctx, progress, domain.ProgressFailed)
+		}
+		return outcome, err
 	}
 
+	s.updateProgress(ctx, progress, domain.ProgressFinalizing)
+	var outcome Outcome
+	var finalizeErr error
 	if turn.Presentation != nil {
-		return s.finalizeStructuredTurn(ctx, invocation, key, turn, metadata)
+		outcome, finalizeErr = s.finalizeStructuredTurn(ctx, invocation, key, turn, metadata)
+	} else {
+		outcome, finalizeErr = s.finalizeTurn(ctx, invocation, key, turn.Text, metadata)
 	}
+	terminal := domain.ProgressFailed
+	if finalizeErr == nil && outcome == OutcomeResponded {
+		terminal = domain.ProgressCleared
+	}
+	s.updateProgress(ctx, progress, terminal)
+	return outcome, finalizeErr
+}
 
-	return s.finalizeTurn(ctx, invocation, key, turn.Text, metadata)
+func (s *Service) presentSuggestedPrompts(ctx context.Context, invocation domain.Invocation, key domain.ConversationKey) {
+	if !s.cfg.PromptsEnabled || s.standardStore == nil || s.promptPublisher == nil ||
+		invocation.ChannelKind != domain.ChannelDM || !invocation.ThreadedDM || invocation.ThreadTS != "" {
+		return
+	}
+	deliveryID, claimed, err := s.standardStore.ClaimSuggestedPrompts(ctx, invocation.TeamID, invocation.UserID, key, s.clock.Now().UTC())
+	if err != nil {
+		s.logger.Warn("suggested prompt claim failed", "conversation_key", key, "error", err)
+		return
+	}
+	if !claimed {
+		return
+	}
+	published, err := s.promptPublisher.PublishSuggestedPrompts(ctx, invocation.ReplyTarget(), deliveryID, s.cfg.SuggestedPrompts)
+	if err != nil {
+		s.logger.Warn("suggested prompt publish failed", "conversation_key", key, "error", err)
+		return
+	}
+	if published.LastMessageTS == "" {
+		s.logger.Warn("suggested prompt publisher returned no timestamp", "conversation_key", key)
+		return
+	}
+	if err := s.standardStore.MarkSuggestedPromptsPublished(ctx, deliveryID, published.LastMessageTS, s.clock.Now().UTC()); err != nil {
+		s.logger.Warn("suggested prompt publication marking failed", "conversation_key", key, "error", err)
+	}
+}
+
+func (s *Service) beginProgress(ctx context.Context, invocation domain.Invocation, key domain.ConversationKey) *domain.ProgressOperation {
+	if !s.cfg.ProgressEnabled || s.standardStore == nil || s.progressPublisher == nil || !invocation.ThreadedDM {
+		return nil
+	}
+	now := s.clock.Now().UTC()
+	operation := domain.ProgressOperation{
+		ID:              "progress:" + invocation.TeamID + ":" + invocation.ChannelID + ":" + invocation.EventTS,
+		ConversationKey: key, ChannelID: invocation.ChannelID, ThreadTS: invocation.ReplyTarget().ThreadTS,
+		State: domain.ProgressWorking, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.standardStore.CreateProgress(ctx, operation); err != nil {
+		s.logger.Warn("progress operation creation failed", "conversation_key", key, "error", err)
+		return nil
+	}
+	published, err := s.progressPublisher.PublishProgress(ctx, invocation.ReplyTarget(), operation)
+	if err != nil {
+		s.logger.Warn("progress publish failed", "conversation_key", key, "error", err)
+		return nil
+	}
+	if published.LastMessageTS == "" {
+		s.logger.Warn("progress publisher returned no timestamp", "conversation_key", key)
+		return &operation
+	}
+	operation.MessageTS = published.LastMessageTS
+	if err := s.standardStore.MarkProgressPublished(ctx, operation.ID, operation.MessageTS); err != nil {
+		s.logger.Warn("progress publication marking failed", "conversation_key", key, "error", err)
+	}
+	return &operation
+}
+
+func (s *Service) updateProgress(ctx context.Context, operation *domain.ProgressOperation, state domain.ProgressState) {
+	if operation == nil || s.standardStore == nil || s.progressPublisher == nil || operation.State.Terminal() {
+		return
+	}
+	operation.State = state
+	operation.UpdatedAt = s.clock.Now().UTC()
+	updateCtx := ctx
+	cancel := func() {}
+	if ctx.Err() != nil {
+		updateCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	}
+	defer cancel()
+	if operation.MessageTS != "" {
+		if err := s.progressPublisher.UpdateProgress(updateCtx, *operation); err != nil {
+			s.logger.Warn("progress update failed", "operation_id", operation.ID, "state", state, "error", err)
+			return
+		}
+	}
+	if err := s.standardStore.SetProgressState(updateCtx, operation.ID, state, operation.UpdatedAt); err != nil {
+		s.logger.Warn("progress state persistence failed", "operation_id", operation.ID, "state", state, "error", err)
+	}
+}
+
+// ReconcileProgress marks stale visible work as interrupted. Waiting
+// confirmations remain valid because their approval state is recovered by the
+// existing confirmation flow.
+func (s *Service) ReconcileProgress(ctx context.Context) error {
+	if !s.cfg.ProgressEnabled || s.standardStore == nil || s.progressPublisher == nil {
+		return nil
+	}
+	operations, err := s.standardStore.ListRecoverableProgress(ctx)
+	if err != nil {
+		return fmt.Errorf("list recoverable progress: %w", err)
+	}
+	for index := range operations {
+		operation := &operations[index]
+		if operation.MessageTS == "" {
+			published, found, err := s.progressPublisher.RecoverProgress(ctx, *operation)
+			if err != nil {
+				return fmt.Errorf("recover progress %s: %w", operation.ID, err)
+			}
+			if !found {
+				state := domain.ProgressInterrupted
+				if operation.State == domain.ProgressWaitingConfirmation {
+					state = domain.ProgressWaitingConfirmation
+				}
+				if err := s.standardStore.SetProgressState(ctx, operation.ID, state, s.clock.Now().UTC()); err != nil {
+					return err
+				}
+				continue
+			}
+			operation.MessageTS = published.LastMessageTS
+			if err := s.standardStore.MarkProgressPublished(ctx, operation.ID, operation.MessageTS); err != nil {
+				return err
+			}
+		}
+		if operation.State == domain.ProgressWaitingConfirmation {
+			s.updateProgress(ctx, operation, domain.ProgressWaitingConfirmation)
+			continue
+		}
+		s.updateProgress(ctx, operation, domain.ProgressInterrupted)
+	}
+	return nil
 }
 
 func (s *Service) handlePendingConfirmation(ctx context.Context, invocation domain.Invocation, key domain.ConversationKey, turn port.AgentTurn) (Outcome, error) {
@@ -701,9 +878,9 @@ func (s *Service) ReconcileConfirmations(ctx context.Context, finder port.Assist
 		correlationID := confirmationCorrelationID(delivery.WrapperCallID)
 		prompt := confirmationPrompt(delivery.Summary, delivery.OriginalCallID, delivery.WrapperCallID, delivery.Expiry)
 		safePrompt := s.sanitize(prompt)
-		channelKind := domain.ChannelDM
-		if delivery.ThreadTS != "" {
-			channelKind = domain.ChannelPublic
+		channelKind := domain.ChannelPublic
+		if strings.HasPrefix(delivery.ChannelID, "D") {
+			channelKind = domain.ChannelDM
 		}
 		_, found, err := finder.FindPublishedAssistantExchange(ctx, port.AssistantExchangeIntent{
 			ChannelID: delivery.ChannelID, ChannelKind: channelKind, RootTS: delivery.ThreadTS,
@@ -969,6 +1146,8 @@ func (s *Service) handleConfirmationCore(ctx context.Context, invocation domain.
 		}
 		return OutcomeIgnoredFollowup
 	}
+	progress := s.waitingProgress(ctx, delivery.ConversationKey)
+	s.updateProgress(ctx, progress, domain.ProgressWorking)
 
 	turn, resumeErr := func() (port.AgentTurn, error) {
 		defer modelRelease()
@@ -982,6 +1161,7 @@ func (s *Service) handleConfirmationCore(ctx context.Context, invocation domain.
 	}()
 	cancel()
 	if resumeErr != nil {
+		s.updateProgress(ctx, progress, domain.ProgressFailed)
 		s.logger.Error("confirmation resume failed", "wrapper_call_id", wrapperCallID, "error", resumeErr)
 		if interactive != nil && s.confirmationPublisher != nil {
 			failedDelivery := *delivery
@@ -1001,6 +1181,7 @@ func (s *Service) handleConfirmationCore(ctx context.Context, invocation domain.
 	if strings.TrimSpace(safeText) == "" {
 		safeText = s.sanitize(fmt.Sprintf("Confirmation %s.", map[bool]string{true: "approved", false: "rejected"}[approved]))
 	}
+	s.updateProgress(ctx, progress, domain.ProgressFinalizing)
 
 	if interactive != nil && s.confirmationPublisher != nil {
 		terminalDelivery := *delivery
@@ -1019,15 +1200,29 @@ func (s *Service) handleConfirmationCore(ctx context.Context, invocation domain.
 		target = domain.ReplyTarget{ChannelID: delivery.ChannelID, ThreadTS: delivery.ThreadTS}
 	}
 	if _, pubErr := s.publisher.Publish(ctx, target, safeText); pubErr != nil {
+		s.updateProgress(ctx, progress, domain.ProgressFailed)
 		s.logger.Error("confirmation result publish failed", "error", pubErr)
 		return OutcomePublishFailed
 	}
+	s.updateProgress(ctx, progress, domain.ProgressCleared)
 
 	s.logger.Info("confirmation processed",
 		"wrapper_call_id", wrapperCallID,
 		"approved", approved,
 		"actor", delivery.Actor)
 	return OutcomeResponded
+}
+
+func (s *Service) waitingProgress(ctx context.Context, key domain.ConversationKey) *domain.ProgressOperation {
+	if !s.cfg.ProgressEnabled || s.standardStore == nil {
+		return nil
+	}
+	operation, err := s.standardStore.FindWaitingProgress(ctx, key)
+	if err != nil {
+		s.logger.Warn("waiting progress lookup failed", "conversation_key", key, "error", err)
+		return nil
+	}
+	return operation
 }
 
 type systemClock struct{}

@@ -44,6 +44,26 @@ type AgentRuntime interface {
 	Resume(ctx context.Context, decision domain.ConfirmationDecision) (AgentTurn, error)
 }
 
+type AgentStreamEventKind string
+
+const (
+	AgentStreamTextDelta           AgentStreamEventKind = "text_delta"
+	AgentStreamPendingConfirmation AgentStreamEventKind = "pending_confirmation"
+	AgentStreamCompleted           AgentStreamEventKind = "completed"
+	AgentStreamError               AgentStreamEventKind = "error"
+)
+
+type AgentStreamEvent struct {
+	Kind      AgentStreamEventKind
+	TextDelta string
+	Turn      *AgentTurn
+	Err       error
+}
+
+type StreamingAgentRuntime interface {
+	Stream(ctx context.Context, request AgentRequest, yield func(AgentStreamEvent) bool)
+}
+
 // AgentToolFactory creates a set of ADK tools scoped to an actor and
 // conversation. It is called once per agent turn before the model call.
 // Returning no tools is valid and produces a text-only agent. A non-nil
@@ -90,6 +110,38 @@ type ResponsePublisher interface {
 
 type PublishedResponse struct {
 	LastMessageTS string
+}
+
+type ProgressPublisher interface {
+	PublishProgress(ctx context.Context, target domain.ReplyTarget, operation domain.ProgressOperation) (PublishedResponse, error)
+	UpdateProgress(ctx context.Context, operation domain.ProgressOperation) error
+	RecoverProgress(ctx context.Context, operation domain.ProgressOperation) (PublishedResponse, bool, error)
+}
+
+type SuggestedPromptPublisher interface {
+	PublishSuggestedPrompts(ctx context.Context, target domain.ReplyTarget, deliveryID string, prompts []string) (PublishedResponse, error)
+}
+
+type IncrementalPublisher interface {
+	CreateIncremental(ctx context.Context, target domain.ReplyTarget, operation domain.IncrementalOperation, text string) (PublishedResponse, error)
+	UpdateIncremental(ctx context.Context, operation domain.IncrementalOperation, text string) error
+	FinalizeIncremental(ctx context.Context, operation domain.IncrementalOperation, text, assistantCorrelationID string) error
+	InterruptIncremental(ctx context.Context, operation domain.IncrementalOperation, text string) error
+	RecoverIncremental(ctx context.Context, operation domain.IncrementalOperation) (PublishedResponse, bool, error)
+}
+
+type StandardExperienceStore interface {
+	CreateProgress(ctx context.Context, operation domain.ProgressOperation) error
+	MarkProgressPublished(ctx context.Context, operationID, messageTS string) error
+	SetProgressState(ctx context.Context, operationID string, state domain.ProgressState, updatedAt time.Time) error
+	ListRecoverableProgress(ctx context.Context) ([]domain.ProgressOperation, error)
+	FindWaitingProgress(ctx context.Context, key domain.ConversationKey) (*domain.ProgressOperation, error)
+	ClaimSuggestedPrompts(ctx context.Context, teamID, userID string, key domain.ConversationKey, createdAt time.Time) (deliveryID string, claimed bool, err error)
+	MarkSuggestedPromptsPublished(ctx context.Context, deliveryID, messageTS string, updatedAt time.Time) error
+	PrepareIncremental(ctx context.Context, operation domain.IncrementalOperation) error
+	MarkIncrementalCreated(ctx context.Context, operationID, messageTS string, updatedAt time.Time) error
+	AdvanceIncremental(ctx context.Context, operationID string, status domain.IncrementalStatus, sequence int, prefixDigest string, updatedAt time.Time) error
+	ListUnfinishedIncremental(ctx context.Context) ([]domain.IncrementalOperation, error)
 }
 
 // PreparedAssistantExchange is returned before publication. CorrelationID is

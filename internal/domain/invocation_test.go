@@ -50,6 +50,26 @@ func TestConversationKeyAndReplyTarget(t *testing.T) {
 			wantKey:    "slack:T12345678:dm:D12345678",
 			wantTarget: ReplyTarget{ChannelID: "D12345678"},
 		},
+		{
+			name: "threaded dm root",
+			invocation: Invocation{
+				EventType: "message.im", TeamID: "T12345678", ChannelID: "D12345678",
+				ChannelKind: ChannelDM, UserID: "U12345678", EventTS: "1700000000.000001",
+				Text: "hello", Trigger: TriggerDirectMessage, ThreadedDM: true,
+			},
+			wantKey:    "slack:T12345678:dm:D12345678:thread:1700000000.000001",
+			wantTarget: ReplyTarget{ChannelID: "D12345678", ThreadTS: "1700000000.000001"},
+		},
+		{
+			name: "threaded dm reply",
+			invocation: Invocation{
+				EventType: "message.im", TeamID: "T12345678", ChannelID: "D12345678",
+				ChannelKind: ChannelDM, UserID: "U12345678", EventTS: "1700000001.000002", ThreadTS: "1700000000.000001",
+				Text: "continue", Trigger: TriggerDirectMessage, ThreadedDM: true,
+			},
+			wantKey:    "slack:T12345678:dm:D12345678:thread:1700000000.000001",
+			wantTarget: ReplyTarget{ChannelID: "D12345678", ThreadTS: "1700000000.000001"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,6 +84,23 @@ func TestConversationKeyAndReplyTarget(t *testing.T) {
 				t.Fatalf("target = %#v, want %#v", got, tt.wantTarget)
 			}
 		})
+	}
+}
+
+func TestMetadataForThreadedDMRetainsRoot(t *testing.T) {
+	invocation := Invocation{
+		EventType: "message.im", TeamID: "T12345678", ChannelID: "D12345678",
+		ChannelKind: ChannelDM, UserID: "U12345678", EventTS: "1700000001.000002",
+		ThreadTS: "1700000000.000001", Text: "continue", Trigger: TriggerDirectMessage,
+		ThreadedDM: true,
+	}
+	key, err := invocation.ConversationKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := MetadataFor(invocation, key)
+	if metadata.RootTS != invocation.ThreadTS {
+		t.Fatalf("RootTS = %q, want %q", metadata.RootTS, invocation.ThreadTS)
 	}
 }
 
@@ -93,7 +130,7 @@ func TestInvocationValidateWithAttachments(t *testing.T) {
 				TeamID: "T12345678", ChannelID: "C12345678", ChannelKind: ChannelPublic,
 				UserID: "U12345678", EventTS: "1700000000.000001",
 				Attachments: []Attachment{{ID: "F00000001", Name: "file.txt", MIMEType: "text/plain", Size: 100}},
-				Trigger: TriggerMention,
+				Trigger:     TriggerMention,
 			},
 			ok: true,
 		},
@@ -124,7 +161,7 @@ func TestInvocationValidateWithAttachments(t *testing.T) {
 				TeamID: "T12345678", ChannelID: "C12345678", ChannelKind: ChannelPublic,
 				UserID: "U12345678", EventTS: "1700000000.000001",
 				Attachments: []Attachment{{Name: "file.txt", MIMEType: "text/plain", Size: 100}},
-				Trigger: TriggerMention,
+				Trigger:     TriggerMention,
 			},
 			ok: false,
 		},
@@ -135,7 +172,7 @@ func TestInvocationValidateWithAttachments(t *testing.T) {
 				TeamID: "T12345678", ChannelID: "C12345678", ChannelKind: ChannelPublic,
 				UserID: "U12345678", EventTS: "1700000000.000001",
 				Attachments: []Attachment{{ID: "F00000001", Name: "file.txt", MIMEType: "text/plain", Size: -1}},
-				Trigger: TriggerMention,
+				Trigger:     TriggerMention,
 			},
 			ok: false,
 		},

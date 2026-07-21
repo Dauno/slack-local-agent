@@ -23,6 +23,9 @@ var migrations = map[int]migrationFunc{
 	12: migrateV12,
 	13: migrateV13,
 	14: migrateV14,
+	15: migrateV15,
+	16: migrateV16,
+	17: migrateV17,
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {
@@ -39,7 +42,9 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if current > SchemaVersion {
 		return &FutureSchemaError{Found: current, Supported: SchemaVersion}
 	}
-	if current > 0 && current < SchemaVersion {
+	// V15 is an additive runtime-state migration and is safe for V14 state.
+	// Older schemas retain the existing explicit-reset requirement.
+	if current > 0 && current < SchemaVersion && current != 14 {
 		return &StateResetNeededError{Found: current, Supported: SchemaVersion}
 	}
 

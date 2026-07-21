@@ -62,6 +62,63 @@ func TestConversationContextSurvivesRestartAndRemainsIsolated(t *testing.T) {
 	}
 }
 
+func TestThreadedDMContextSurvivesRestartAndIsolatesRoots(t *testing.T) {
+	database := filepath.Join(t.TempDir(), "local-agent.db")
+	store, err := adaptersqlite.Initialize(t.Context(), database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnsureDMIdentityMode(t.Context(), true); err != nil {
+		t.Fatal(err)
+	}
+	firstRuntime := &recordingRuntime{responses: []string{"first answer", "second answer"}}
+	firstService := integrationService(t, store, firstRuntime)
+	firstRoot := dmInvocation("Ev-thread-1", "D12345678", "1700000000.000001", "first root")
+	firstRoot.ThreadedDM = true
+	secondRoot := dmInvocation("Ev-thread-2", "D12345678", "1700000001.000002", "second root")
+	secondRoot.ThreadedDM = true
+	if outcome, err := firstService.Handle(t.Context(), firstRoot); err != nil || outcome != botusecase.OutcomeResponded {
+		t.Fatalf("first root outcome=%q err=%v", outcome, err)
+	}
+	if outcome, err := firstService.Handle(t.Context(), secondRoot); err != nil || outcome != botusecase.OutcomeResponded {
+		t.Fatalf("second root outcome=%q err=%v", outcome, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := adaptersqlite.OpenExisting(t.Context(), database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if err := reopened.EnsureDMIdentityMode(t.Context(), true); err != nil {
+		t.Fatal(err)
+	}
+	secondRuntime := &recordingRuntime{responses: []string{"continued answer"}}
+	secondService := integrationService(t, reopened, secondRuntime)
+	reply := dmInvocation("Ev-thread-3", "D12345678", "1700000002.000003", "continue first")
+	reply.ThreadedDM = true
+	reply.ThreadTS = firstRoot.EventTS
+	if outcome, err := secondService.Handle(t.Context(), reply); err != nil || outcome != botusecase.OutcomeResponded {
+		t.Fatalf("reply outcome=%q err=%v", outcome, err)
+	}
+
+	contexts := secondRuntime.contextsSnapshot()
+	if len(contexts) != 1 {
+		t.Fatalf("model contexts=%d", len(contexts))
+	}
+	want := []string{"first root", "first answer", "continue first"}
+	if len(contexts[0]) != len(want) {
+		t.Fatalf("threaded context=%#v", contexts[0])
+	}
+	for index, content := range want {
+		if contexts[0][index].Content != content {
+			t.Fatalf("threaded context[%d]=%q, want %q", index, contexts[0][index].Content, content)
+		}
+	}
+}
+
 func integrationService(t *testing.T, store port.ConversationStore, runtime port.AgentRuntime) *botusecase.Service {
 	t.Helper()
 	service, err := botusecase.New(botusecase.Config{

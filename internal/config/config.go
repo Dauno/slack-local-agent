@@ -77,16 +77,27 @@ type ModelConfig struct {
 }
 
 type SlackConfig struct {
-	AppName             string             `yaml:"app_name"`
-	BotDisplayName      string             `yaml:"bot_display_name"`
-	UnauthorizedMessage string             `yaml:"unauthorized_message"`
-	AllowAllUsers       bool               `yaml:"allow_all_users"`
-	AllowedUserIDs      []string           `yaml:"allowed_user_ids"`
-	AllowedTeamIDs      []string           `yaml:"allowed_team_ids"`
-	AllowedChannelIDs   []string           `yaml:"allowed_channel_ids"`
-	PartLabels          bool               `yaml:"part_labels"`
-	Context             SlackContextConfig `yaml:"context"`
-	Files               SlackFilesConfig   `yaml:"files"`
+	AppName             string                   `yaml:"app_name"`
+	BotDisplayName      string                   `yaml:"bot_display_name"`
+	UnauthorizedMessage string                   `yaml:"unauthorized_message"`
+	AllowAllUsers       bool                     `yaml:"allow_all_users"`
+	AllowedUserIDs      []string                 `yaml:"allowed_user_ids"`
+	AllowedTeamIDs      []string                 `yaml:"allowed_team_ids"`
+	AllowedChannelIDs   []string                 `yaml:"allowed_channel_ids"`
+	PartLabels          bool                     `yaml:"part_labels"`
+	StandardAgent       SlackStandardAgentConfig `yaml:"standard_agent"`
+	Context             SlackContextConfig       `yaml:"context"`
+	Files               SlackFilesConfig         `yaml:"files"`
+}
+
+// SlackStandardAgentConfig gates incompatible standard Slack agent behavior.
+type SlackStandardAgentConfig struct {
+	ThreadedDM            bool     `yaml:"threaded_dm"`
+	ProgressEnabled       bool     `yaml:"progress_enabled"`
+	PromptsEnabled        bool     `yaml:"prompts_enabled"`
+	SuggestedPrompts      []string `yaml:"suggested_prompts"`
+	StreamingEnabled      bool     `yaml:"streaming_enabled"`
+	UpdateIntervalSeconds int      `yaml:"update_interval_seconds"`
 }
 
 type SlackFilesConfig struct {
@@ -183,6 +194,11 @@ func Default() Config {
 			AllowedTeamIDs:      []string{},
 			AllowedChannelIDs:   []string{},
 			PartLabels:          true,
+			StandardAgent: SlackStandardAgentConfig{SuggestedPrompts: []string{
+				"Resume el contexto y destaca las decisiones pendientes.",
+				"Analiza el proyecto y señala los riesgos principales.",
+				"Prepara un plan de implementación verificable.",
+			}, UpdateIntervalSeconds: 3},
 			Context: SlackContextConfig{
 				Enabled:                     false,
 				MaxChars:                    1500,

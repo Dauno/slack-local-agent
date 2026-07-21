@@ -15,11 +15,14 @@ import (
 type Router struct {
 	botUserID  string
 	botMention *regexp.Regexp
+	threadedDM bool
 }
 
-func NewRouter(botUserID string) Router {
+func NewRouter(botUserID string, threadedDM ...bool) Router {
+	useThreadedDM := len(threadedDM) > 0 && threadedDM[0]
 	return Router{
-		botUserID: botUserID,
+		botUserID:  botUserID,
+		threadedDM: useThreadedDM,
 		botMention: regexp.MustCompile(
 			`<@` + regexp.QuoteMeta(botUserID) + `(?:\|[^>]+)?>`,
 		),
@@ -116,6 +119,7 @@ func (r Router) routeMessage(eventID, teamID string, event slackevents.MessageEv
 	switch event.ChannelType {
 	case slackevents.ChannelTypeIM:
 		invocation.ChannelKind = domain.ChannelDM
+		invocation.ThreadedDM = r.threadedDM
 		invocation.Trigger = domain.TriggerDirectMessage
 		invocation.Text = r.withoutBotMention(event.Text)
 		invocation.Attachments = mapFilesToAttachments(files)

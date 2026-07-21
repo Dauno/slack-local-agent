@@ -132,6 +132,40 @@ func TestMemoryStore_AssistantExchangeIsAtomicAndSurvivesRetention(t *testing.T)
 	}
 }
 
+func TestThreadedDMAssistantExchangePersistsRecoveryRoot(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := t.Context()
+	const rootTS = "1700000000.000001"
+	metadata := domain.ConversationMetadata{
+		Key:    "slack:T12345678:dm:D12345678:thread:" + rootTS,
+		TeamID: "T12345678", ChannelID: "D12345678", ChannelKind: domain.ChannelDM,
+		RootTS: rootTS, LastTS: rootTS,
+	}
+	now := time.Now().UTC()
+	if err := store.AppendMessage(ctx, metadata, domain.Message{
+		Role: domain.RoleUser, Content: "source", UserID: "U12345678",
+		ExternalTS: rootTS, CreatedAt: now,
+	}, 10); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := store.PrepareAssistantExchange(ctx, metadata, domain.Message{
+		Role: domain.RoleAssistant, Content: "response", CreatedAt: now.Add(time.Second),
+	}, 10, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var intentRoot, conversationRoot string
+	if err := store.db.QueryRowContext(ctx, `SELECT root_ts FROM memory_exchange_intents WHERE id = ?`, prepared.ID).Scan(&intentRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT root_ts FROM conversations WHERE conversation_key = ?`, metadata.Key).Scan(&conversationRoot); err != nil {
+		t.Fatal(err)
+	}
+	if intentRoot != rootTS || conversationRoot != "" {
+		t.Fatalf("roots = intent %q, conversation %q", intentRoot, conversationRoot)
+	}
+}
+
 func TestMemoryStore_IneligibleAssistantExchangePersistsWithoutOutbox(t *testing.T) {
 	store, _ := newTestStore(t)
 	ctx := t.Context()

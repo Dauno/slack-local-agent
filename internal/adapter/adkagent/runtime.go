@@ -52,6 +52,7 @@ type Runtime struct {
 }
 
 var _ port.AgentRuntime = (*Runtime)(nil)
+var _ port.StreamingAgentRuntime = (*Runtime)(nil)
 
 // NewRuntime creates an ADK-backed agent runtime.
 func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
@@ -185,6 +186,63 @@ func (r *Runtime) Run(ctx context.Context, req port.AgentRequest) (port.AgentTur
 		return port.AgentTurn{}, err
 	}
 	return turn, nil
+}
+
+// Stream executes one turn with ADK SSE mode and exposes only typed model text
+// deltas. Function calls and arguments remain inside ADK.
+func (r *Runtime) Stream(ctx context.Context, req port.AgentRequest, yield func(port.AgentStreamEvent) bool) {
+	terminalError := func(err error) {
+		yield(port.AgentStreamEvent{Kind: port.AgentStreamError, Err: err})
+	}
+	if yield == nil {
+		return
+	}
+	if strings.TrimSpace(string(req.ConversationKey)) == "" {
+		terminalError(errors.New("conversation key is required"))
+		return
+	}
+	if len(req.Messages) == 0 {
+		terminalError(fmt.Errorf("%w: at least one message is required", ErrInvalidHistory))
+		return
+	}
+	if err := validateMessages(req.Messages); err != nil {
+		terminalError(err)
+		return
+	}
+	current := req.Messages[len(req.Messages)-1]
+	if current.Role != domain.RoleUser {
+		terminalError(fmt.Errorf("%w: final message must have user role", ErrInvalidHistory))
+		return
+	}
+	sessionID := adkSessionID(req.ConversationKey)
+	if _, err := r.ensureSession(ctx, sessionID); err != nil {
+		terminalError(fmt.Errorf("ensure ADK session: %w", err))
+		return
+	}
+	tools := append([]tool.Tool(nil), r.staticTools...)
+	if r.toolFactory != nil {
+		rawTools, err := r.toolFactory.ToolsForInvocation(current.UserID, req.ConversationKey)
+		if err != nil {
+			terminalError(fmt.Errorf("build invocation tools: %w", err))
+			return
+		}
+		for _, raw := range rawTools {
+			if t, ok := raw.(tool.Tool); ok {
+				tools = append(tools, t)
+			}
+		}
+	}
+	agent, err := r.buildAgent(tools, buildBeforeModelContext(req))
+	if err != nil {
+		terminalError(fmt.Errorf("build agent: %w", err))
+		return
+	}
+	adkRunner, err := runner.New(runner.Config{AppName: applicationName, Agent: agent, SessionService: r.sessionService})
+	if err != nil {
+		terminalError(fmt.Errorf("create runner: %w", err))
+		return
+	}
+	runStreamingTurn(ctx, adkRunner, genai.NewContentFromText(current.Content, genai.RoleUser), sessionID, current.UserID, req.ConversationKey, yield)
 }
 
 // Resume continues a pending confirmation by sending the user's decision.
@@ -350,6 +408,76 @@ func runTurn(ctx context.Context, adkRunner *runner.Runner, input *genai.Content
 		Text:                strings.TrimSpace(finalText),
 		PendingConfirmation: pendingConfirmation,
 	}, nil
+}
+
+func runStreamingTurn(ctx context.Context, adkRunner *runner.Runner, input *genai.Content, sessionID, actor string, key domain.ConversationKey, yield func(port.AgentStreamEvent) bool) {
+	var (
+		allText             strings.Builder
+		partialText         strings.Builder
+		pendingConfirmation *domain.PendingConfirmation
+		lastFinalText       string
+	)
+	for event, runErr := range adkRunner.Run(ctx, ephemeralUserID, sessionID, input, agent.RunConfig{StreamingMode: agent.StreamingModeSSE}) {
+		if runErr != nil {
+			yield(port.AgentStreamEvent{Kind: port.AgentStreamError, Err: fmt.Errorf("run streaming ADK agent: %w", runErr)})
+			return
+		}
+		if event == nil || event.Content == nil {
+			continue
+		}
+		for _, part := range event.Content.Parts {
+			if part.FunctionCall != nil && part.FunctionCall.Name == toolconfirmation.FunctionCallName {
+				pendingConfirmation = extractConfirmation(part.FunctionCall)
+				if pendingConfirmation != nil {
+					pendingConfirmation.Actor = actor
+					pendingConfirmation.ConversationKey = key
+				}
+			}
+		}
+		text, _ := eventText(event.Content)
+		if event.Partial && event.Content.Role == genai.RoleModel && text != "" {
+			if partialText.Len() == 0 && allText.Len() > 0 {
+				allText.WriteString("\n\n")
+			}
+			partialText.WriteString(text)
+			allText.WriteString(text)
+			if !yield(port.AgentStreamEvent{Kind: port.AgentStreamTextDelta, TextDelta: text}) {
+				return
+			}
+			continue
+		}
+		if !event.Partial && event.Content.Role == genai.RoleModel {
+			if partialText.Len() > 0 {
+				if text != "" && text != partialText.String() {
+					yield(port.AgentStreamEvent{Kind: port.AgentStreamError, Err: errors.New("streamed ADK text differs from its final aggregate")})
+					return
+				}
+				partialText.Reset()
+			} else if text != "" {
+				if allText.Len() > 0 {
+					allText.WriteString("\n\n")
+				}
+				allText.WriteString(text)
+			}
+		}
+		if event.IsFinalResponse() && event.Content.Role == genai.RoleModel && text != "" {
+			lastFinalText = text
+		}
+	}
+	text := strings.TrimSpace(allText.String())
+	if text == "" {
+		text = strings.TrimSpace(lastFinalText)
+	}
+	turn := &port.AgentTurn{Text: text, PendingConfirmation: pendingConfirmation}
+	if pendingConfirmation != nil {
+		yield(port.AgentStreamEvent{Kind: port.AgentStreamPendingConfirmation, Turn: turn})
+		return
+	}
+	if text == "" {
+		yield(port.AgentStreamEvent{Kind: port.AgentStreamError, Err: ErrNoResponse})
+		return
+	}
+	yield(port.AgentStreamEvent{Kind: port.AgentStreamCompleted, Turn: turn})
 }
 
 func extractConfirmation(fc *genai.FunctionCall) *domain.PendingConfirmation {

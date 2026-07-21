@@ -1,0 +1,151 @@
+{
+  "observed_on": "2026-07-21",
+  "cases": [
+    {
+      "name": "root",
+      "retry_attempt": 0,
+      "retry_reason": "",
+      "routed": true,
+      "want_event_ts": "1700000000.000001",
+      "want_thread_ts": "",
+      "payload": {
+        "token": "redacted",
+        "team_id": "T00000001",
+        "api_app_id": "A00000001",
+        "type": "event_callback",
+        "event_id": "Ev00000001",
+        "event_time": 1700000000,
+        "event": {
+          "type": "message",
+          "user": "U00000002",
+          "text": "spike root",
+          "channel": "D00000001",
+          "channel_type": "im",
+          "ts": "1700000000.000001",
+          "event_ts": "1700000000.000001"
+        }
+      }
+    },
+    {
+      "name": "root_retry_after_timeout",
+      "retry_attempt": 2,
+      "retry_reason": "timeout",
+      "routed": true,
+      "want_event_ts": "1700000000.000001",
+      "want_thread_ts": "",
+      "payload": {
+        "token": "redacted",
+        "team_id": "T00000001",
+        "api_app_id": "A00000001",
+        "type": "event_callback",
+        "event_id": "Ev00000001",
+        "event_time": 1700000000,
+        "event": {
+          "type": "message",
+          "user": "U00000002",
+          "text": "spike root",
+          "channel": "D00000001",
+          "channel_type": "im",
+          "ts": "1700000000.000001",
+          "event_ts": "1700000000.000001"
+        }
+      }
+    },
+    {
+      "name": "thread_reply",
+      "retry_attempt": 0,
+      "retry_reason": "",
+      "routed": true,
+      "want_event_ts": "1700000001.000002",
+      "want_thread_ts": "1700000000.000001",
+      "payload": {
+        "token": "redacted",
+        "team_id": "T00000001",
+        "api_app_id": "A00000001",
+        "type": "event_callback",
+        "event_id": "Ev00000002",
+        "event_time": 1700000001,
+        "event": {
+          "type": "message",
+          "user": "U00000002",
+          "text": "spike reply",
+          "channel": "D00000001",
+          "channel_type": "im",
+          "thread_ts": "1700000000.000001",
+          "parent_user_id": "U00000002",
+          "ts": "1700000001.000002",
+          "event_ts": "1700000001.000002"
+        }
+      }
+    },
+    {
+      "name": "thread_reply_changed",
+      "retry_attempt": 0,
+      "retry_reason": "",
+      "routed": false,
+      "payload": {
+        "token": "redacted",
+        "team_id": "T00000001",
+        "api_app_id": "A00000001",
+        "type": "event_callback",
+        "event_id": "Ev00000003",
+        "event_time": 1700000002,
+        "event": {
+          "type": "message",
+          "subtype": "message_changed",
+          "hidden": true,
+          "channel": "D00000001",
+          "channel_type": "im",
+          "ts": "1700000002.000003",
+          "event_ts": "1700000002.000003",
+          "message": {
+            "type": "message",
+            "user": "U00000002",
+            "text": "spike reply edited",
+            "thread_ts": "1700000000.000001",
+            "ts": "1700000001.000002",
+            "edited": {"user": "U00000002", "ts": "1700000002.000004"}
+          },
+          "previous_message": {
+            "type": "message",
+            "user": "U00000002",
+            "text": "spike reply",
+            "thread_ts": "1700000000.000001",
+            "ts": "1700000001.000002"
+          }
+        }
+      }
+    },
+    {
+      "name": "thread_reply_deleted",
+      "retry_attempt": 0,
+      "retry_reason": "",
+      "routed": false,
+      "payload": {
+        "token": "redacted",
+        "team_id": "T00000001",
+        "api_app_id": "A00000001",
+        "type": "event_callback",
+        "event_id": "Ev00000004",
+        "event_time": 1700000003,
+        "event": {
+          "type": "message",
+          "subtype": "message_deleted",
+          "hidden": true,
+          "channel": "D00000001",
+          "channel_type": "im",
+          "deleted_ts": "1700000001.000002",
+          "ts": "1700000003.000005",
+          "event_ts": "1700000003.000005",
+          "previous_message": {
+            "type": "message",
+            "user": "U00000002",
+            "text": "spike reply edited",
+            "thread_ts": "1700000000.000001",
+            "ts": "1700000001.000002"
+          }
+        }
+      }
+    }
+  ]
+}

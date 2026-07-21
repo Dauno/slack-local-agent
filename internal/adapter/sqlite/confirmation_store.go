@@ -239,8 +239,11 @@ func (s *ConfirmationStore) ExpireDeliveries(ctx context.Context, now time.Time)
 }
 
 func deliveryConversationKey(teamID, channelID, threadTS string) domain.ConversationKey {
-	if threadTS == "" {
-		return domain.ConversationKey(fmt.Sprintf("slack:%s:dm:%s", teamID, channelID))
+	if len(channelID) > 0 && channelID[0] == 'D' {
+		if threadTS == "" {
+			return domain.ConversationKey(fmt.Sprintf("slack:%s:dm:%s", teamID, channelID))
+		}
+		return domain.ConversationKey(fmt.Sprintf("slack:%s:dm:%s:thread:%s", teamID, channelID, threadTS))
 	}
 	return domain.ConversationKey(fmt.Sprintf("slack:%s:channel:%s:thread:%s", teamID, channelID, threadTS))
 }

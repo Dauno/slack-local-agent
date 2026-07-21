@@ -16,9 +16,6 @@ import (
 )
 
 var (
-	// ErrStreamingUnsupported is returned because the MVP only performs one
-	// non-streaming Chat Completions request.
-	ErrStreamingUnsupported = errors.New("streaming model responses are not supported")
 	// ErrToolsUnsupported is returned before any provider call when ADK supplies
 	// tools, function calls, or tool responses.
 	ErrToolsUnsupported = errors.New("model tools and function parts are not supported")
@@ -29,8 +26,7 @@ var (
 	ErrNoAssistantText = errors.New("model response contained no non-empty assistant text")
 )
 
-// OpenAICompatibleLLM implements ADK's model.LLM using non-streaming OpenAI
-// Chat Completions.
+// OpenAICompatibleLLM implements ADK's model.LLM using OpenAI Chat Completions.
 type OpenAICompatibleLLM struct {
 	client          openai.Client
 	model           string
@@ -71,14 +67,12 @@ func (m *OpenAICompatibleLLM) Name() string {
 	return m.model
 }
 
+func (m *OpenAICompatibleLLM) SupportsStreaming() bool { return m != nil }
+
 // GenerateContent converts one ADK request into one non-streaming Chat
 // Completions request and yields at most one ADK response.
 func (m *OpenAICompatibleLLM) GenerateContent(ctx context.Context, request *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
-		if stream {
-			yield(nil, ErrStreamingUnsupported)
-			return
-		}
 		if m == nil {
 			yield(nil, errors.New("OpenAI-compatible model is nil"))
 			return
@@ -87,6 +81,10 @@ func (m *OpenAICompatibleLLM) GenerateContent(ctx context.Context, request *mode
 		params, err := m.requestParams(request)
 		if err != nil {
 			yield(nil, err)
+			return
+		}
+		if stream {
+			m.generateStream(ctx, params, yield)
 			return
 		}
 		completion, err := m.client.Chat.Completions.New(ctx, params)
@@ -102,6 +100,43 @@ func (m *OpenAICompatibleLLM) GenerateContent(ctx context.Context, request *mode
 		}
 		yield(response, nil)
 	}
+}
+
+func (m *OpenAICompatibleLLM) generateStream(ctx context.Context, params openai.ChatCompletionNewParams, yield func(*model.LLMResponse, error) bool) {
+	stream := m.client.Chat.Completions.NewStreaming(ctx, params)
+	accumulator := openai.ChatCompletionAccumulator{}
+	for stream.Next() {
+		chunk := stream.Current()
+		if !accumulator.AddChunk(chunk) {
+			yield(nil, errors.New("OpenAI-compatible stream contained inconsistent chunks"))
+			return
+		}
+		for _, choice := range chunk.Choices {
+			if choice.Delta.Content == "" {
+				continue
+			}
+			if !yield(&model.LLMResponse{
+				Content:      genai.NewContentFromText(choice.Delta.Content, genai.RoleModel),
+				ModelVersion: chunk.Model,
+				Partial:      true,
+			}, nil) {
+				return
+			}
+			break
+		}
+	}
+	if err := stream.Err(); err != nil {
+		yield(nil, fmt.Errorf("OpenAI-compatible streaming Chat Completions request failed: %w", err))
+		return
+	}
+	response, err := responseFromCompletion(&accumulator.ChatCompletion)
+	if err != nil {
+		yield(nil, err)
+		return
+	}
+	response.Partial = false
+	response.TurnComplete = true
+	yield(response, nil)
 }
 
 func responseFromCompletion(completion *openai.ChatCompletion) (*model.LLMResponse, error) {

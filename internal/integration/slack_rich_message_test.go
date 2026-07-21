@@ -129,7 +129,7 @@ func TestSlackStructuredPublicationUsesBlocksAndReconcilesFromMetadata(t *testin
 	if postedText != presentation.FallbackMarkdown || postedMarkdown != "" || postedBlocks == "" {
 		t.Fatalf("structured Slack fields: text=%q markdown_text=%q blocks=%q", postedText, postedMarkdown, postedBlocks)
 	}
-	if unfurlLinks != "false" || unfurlMedia != "false" || postedMetadata["event_type"] != "local_agent.assistant_exchange" {
+	if unfurlLinks != "false" || unfurlMedia != "false" || postedMetadata["event_type"] != "local_agent_assistant_exchange" {
 		t.Fatalf("structured Slack options: unfurl_links=%q unfurl_media=%q metadata=%#v", unfurlLinks, unfurlMedia, postedMetadata)
 	}
 	payload, _ := postedMetadata["event_payload"].(map[string]any)

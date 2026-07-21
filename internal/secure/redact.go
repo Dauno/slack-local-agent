@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -28,6 +29,16 @@ func Mask(value string) string {
 	}
 
 	return prefix + maskMarker + value[len(value)-4:]
+}
+
+// StreamingCarryRunes returns the minimum suffix a streaming transport must
+// retain so a registered secret split across deltas is never emitted early.
+func (r Redactor) StreamingCarryRunes() int {
+	carry := 128
+	for _, secret := range r.secrets {
+		carry = max(carry, utf8.RuneCountInString(secret))
+	}
+	return carry
 }
 
 // Redactor replaces registered credentials and commonly recognizable token

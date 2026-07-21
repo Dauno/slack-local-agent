@@ -123,7 +123,7 @@ func (p *BlockPublisher) PublishStructured(ctx context.Context, target domain.Re
 	for index, blocks := range parts {
 		metadata := slackapi.SlackMetadata{}
 		if target.CorrelationID != "" {
-			metadata.EventType = "local_agent.assistant_exchange"
+			metadata.EventType = assistantMetadataEventType
 			metadata.EventPayload = map[string]any{
 				"correlation_id": target.CorrelationID,
 				"render_mode":    blocksV1RenderMode,

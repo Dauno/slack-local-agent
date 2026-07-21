@@ -96,6 +96,52 @@ func TestHistoryReaderUsesDMHistoryAndRestoresChronologicalOrder(t *testing.T) {
 	}
 }
 
+func TestHistoryReaderUsesRepliesForThreadedDM(t *testing.T) {
+	t.Parallel()
+	client := &fakeHistoryClient{replies: []slackapi.Message{
+		{Msg: slackapi.Msg{User: testUser, Text: "root", Timestamp: testThread}},
+		{Msg: slackapi.Msg{User: testBot, Text: "answer", Timestamp: testTS}},
+	}}
+	reader := newHistoryReader(client, testBot, time.Second, nil, true)
+	invocation := validDMInvocation()
+	invocation.ThreadedDM = true
+	invocation.ThreadTS = testThread
+
+	got, err := reader.RecentHistory(context.Background(), invocation, domain.ContextLimits{MaxMessages: 3, MaxChars: 100})
+	if err != nil {
+		t.Fatalf("RecentHistory() error = %v", err)
+	}
+	if len(got.Messages) != 2 || got.Messages[0].Content != "root" || got.Messages[1].Content != "answer" {
+		t.Fatalf("thread history = %#v", got.Messages)
+	}
+	call := client.lastCall()
+	if call.method != "replies" || call.channelID != testDM || call.rootTS != testThread || call.latest != testTS {
+		t.Fatalf("history call = %#v", call)
+	}
+}
+
+func TestHistoryReaderRecoversThreadedDMExchangeFromReplies(t *testing.T) {
+	t.Parallel()
+	const content = "threaded response"
+	parts := renderMarkdownV1(content, true)
+	client := &fakeHistoryClient{replies: []slackapi.Message{{Msg: slackapi.Msg{
+		User: testBot, Timestamp: "1720000002.000002",
+		Metadata: exchangeMetadataFor("threaded-correlation", markdownRenderMode, 1, 1, contentSHA256(parts[0])),
+	}}}}
+	reader := newHistoryReader(client, testBot, time.Second, nil, true)
+
+	timestamp, found, err := reader.FindPublishedAssistantExchange(context.Background(), port.AssistantExchangeIntent{
+		ChannelID: testDM, ChannelKind: domain.ChannelDM, RootTS: testThread,
+		Content: content, CorrelationID: "threaded-correlation",
+	})
+	if err != nil || !found || timestamp != "1720000002.000002" {
+		t.Fatalf("FindPublishedAssistantExchange() = %q, %t, %v", timestamp, found, err)
+	}
+	if call := client.lastCall(); call.method != "replies" || call.rootTS != testThread {
+		t.Fatalf("recovery call = %#v", call)
+	}
+}
+
 func TestHistoryReaderEnforcesMessageAndCharacterLimitsDefensively(t *testing.T) {
 	t.Parallel()
 	client := &fakeHistoryClient{replies: []slackapi.Message{
@@ -156,7 +202,7 @@ func TestHistoryReaderReturnsRedactedWrappedAPIErrors(t *testing.T) {
 
 func exchangeMetadataFor(correlationID, renderMode string, partIndex, partCount int, digest string) slackapi.SlackMetadata {
 	return slackapi.SlackMetadata{
-		EventType: "local_agent.assistant_exchange",
+		EventType: assistantMetadataEventType,
 		EventPayload: map[string]any{
 			"correlation_id": correlationID,
 			"render_mode":    renderMode,
@@ -229,7 +275,7 @@ func TestHistoryReaderFindsPublishedAssistantExchangeByMetadataDigest(t *testing
 	client := &fakeHistoryClient{history: []slackapi.Message{
 		{Msg: slackapi.Msg{User: testBot, Text: "older reply", Timestamp: "1719999999.000001"}},
 		{Msg: slackapi.Msg{User: testBot, Text: "translated by slack", Timestamp: "1720000001.000002", Metadata: slackapi.SlackMetadata{
-			EventType: "local_agent.assistant_exchange",
+			EventType: assistantMetadataEventType,
 			EventPayload: map[string]any{
 				"correlation_id": "intent-correlation",
 				"render_mode":    "markdown_v1",
@@ -257,7 +303,7 @@ func TestHistoryReaderRejectsRecoveryWithWrongDigest(t *testing.T) {
 	t.Parallel()
 	client := &fakeHistoryClient{history: []slackapi.Message{
 		{Msg: slackapi.Msg{User: testBot, Text: "some text", Timestamp: "1720000001.000002", Metadata: slackapi.SlackMetadata{
-			EventType: "local_agent.assistant_exchange",
+			EventType: assistantMetadataEventType,
 			EventPayload: map[string]any{
 				"correlation_id": "intent-correlation",
 				"render_mode":    "markdown_v1",
@@ -393,6 +439,18 @@ func TestHistoryReaderRejectsRecoveryWithoutMetadata(t *testing.T) {
 	}
 }
 
+func TestMapHistoryExcludesApplicationOwnedControlMessages(t *testing.T) {
+	messages := []slackapi.Message{
+		{Msg: slackapi.Msg{User: testBot, Text: "Working", Timestamp: "1720000000.000001", Metadata: slackapi.SlackMetadata{EventType: progressMetadataEventType}}},
+		{Msg: slackapi.Msg{User: testBot, Text: "Try this", Timestamp: "1720000001.000001", Metadata: slackapi.SlackMetadata{EventType: promptMetadataEventType}}},
+		{Msg: slackapi.Msg{User: testUser, Text: "question", Timestamp: "1720000002.000001"}},
+	}
+	history := mapHistory(messages, testBot, 1000)
+	if history.BotParticipated || len(history.Messages) != 1 || history.Messages[0].Content != "question" {
+		t.Fatalf("control messages leaked into history: %#v", history)
+	}
+}
+
 func TestHistoryReaderRequiresCorrelationOnEveryMultipartChunk(t *testing.T) {
 	t.Parallel()
 	content := strings.Repeat("x", SlackMarkdownChunkRunes+100)
@@ -403,7 +461,7 @@ func TestHistoryReaderRequiresCorrelationOnEveryMultipartChunk(t *testing.T) {
 	digest0 := contentSHA256(chunks[0])
 	client := &fakeHistoryClient{history: []slackapi.Message{
 		{Msg: slackapi.Msg{User: testBot, Text: chunks[0], Timestamp: "1720000001.000001", Metadata: slackapi.SlackMetadata{
-			EventType: "local_agent.assistant_exchange",
+			EventType: assistantMetadataEventType,
 			EventPayload: map[string]any{
 				"correlation_id": "intent-correlation",
 				"render_mode":    "markdown_v1",

@@ -51,6 +51,11 @@ func TestDefaultMatchesPRD(t *testing.T) {
 			AllowedTeamIDs:      []string{},
 			AllowedChannelIDs:   []string{},
 			PartLabels:          true,
+			StandardAgent: config.SlackStandardAgentConfig{SuggestedPrompts: []string{
+				"Resume el contexto y destaca las decisiones pendientes.",
+				"Analiza el proyecto y señala los riesgos principales.",
+				"Prepara un plan de implementación verificable.",
+			}, UpdateIntervalSeconds: 3},
 			Context: config.SlackContextConfig{
 				Enabled:                     false,
 				MaxChars:                    1500,
@@ -143,6 +148,16 @@ slack:
   allowed_team_ids: []
   allowed_channel_ids: []
   part_labels: true
+  standard_agent:
+    threaded_dm: false
+    progress_enabled: false
+    prompts_enabled: false
+    suggested_prompts:
+      - Resume el contexto y destaca las decisiones pendientes.
+      - Analiza el proyecto y señala los riesgos principales.
+      - Prepara un plan de implementación verificable.
+    streaming_enabled: false
+    update_interval_seconds: 3
   context:
     enabled: false
     max_chars: 1500
@@ -377,6 +392,25 @@ func TestValidateAcceptsConfiguredAccessListsAndHeaders(t *testing.T) {
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error: %v", err)
+	}
+}
+
+func TestValidateStandardAgentFeaturesRequireThreadedDMAndBoundedPrompts(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.Slack.StandardAgent.ProgressEnabled = true
+	cfg.Slack.StandardAgent.PromptsEnabled = true
+	cfg.Slack.StandardAgent.SuggestedPrompts = []string{"one", "two", "three", "four", "five", "six"}
+	err := cfg.Validate()
+	var validation *config.ValidationError
+	if !errors.As(err, &validation) || !validation.Has("slack.standard_agent.threaded_dm") || !validation.Has("slack.standard_agent.suggested_prompts") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	cfg.Slack.StandardAgent.ThreadedDM = true
+	cfg.Slack.StandardAgent.SuggestedPrompts = []string{"one"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid standard agent config: %v", err)
 	}
 }
 
@@ -736,5 +770,19 @@ func TestParsePartLabelsExplicitTrue(t *testing.T) {
 	}
 	if !cfg.Slack.PartLabels {
 		t.Fatal("part_labels should be true when explicitly set")
+	}
+}
+
+func TestParseThreadedDMExplicitTrue(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.Parse([]byte(`slack:
+  standard_agent:
+    threaded_dm: true
+`))
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	if !cfg.Slack.StandardAgent.ThreadedDM {
+		t.Fatal("threaded_dm should be true when explicitly set")
 	}
 }

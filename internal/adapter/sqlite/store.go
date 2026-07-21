@@ -527,6 +527,12 @@ func appendMessageTx(ctx context.Context, tx *sql.Tx, metadata domain.Conversati
 	}
 
 	createdNanos := message.CreatedAt.UnixNano()
+	conversationRootTS := metadata.RootTS
+	if metadata.ChannelKind == domain.ChannelDM {
+		// The v1 schema requires an empty root for DM rows; the canonical
+		// threaded root remains encoded in the conversation key.
+		conversationRootTS = ""
+	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO conversations (
 			conversation_key, team_id, channel_id, channel_kind,
@@ -543,7 +549,7 @@ func appendMessageTx(ctx context.Context, tx *sql.Tx, metadata domain.Conversati
 			AND conversations.channel_kind = excluded.channel_kind
 			AND conversations.root_ts = excluded.root_ts`,
 		string(metadata.Key), metadata.TeamID, metadata.ChannelID, string(metadata.ChannelKind),
-		metadata.RootTS, metadata.LastTS, createdNanos, createdNanos,
+		conversationRootTS, metadata.LastTS, createdNanos, createdNanos,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert conversation metadata: %w", err)

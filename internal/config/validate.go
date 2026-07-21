@@ -126,6 +126,29 @@ func Validate(cfg Config) error {
 	validateIDs(&problems, "slack.allowed_user_ids", cfg.Slack.AllowedUserIDs, slackUserIDPattern, "a plausible Slack user ID beginning with U or W")
 	validateIDs(&problems, "slack.allowed_team_ids", cfg.Slack.AllowedTeamIDs, slackTeamIDPattern, "a plausible Slack team ID beginning with T")
 	validateIDs(&problems, "slack.allowed_channel_ids", cfg.Slack.AllowedChannelIDs, slackChannelIDPattern, "a plausible Slack public or private channel ID beginning with C or G")
+	if (cfg.Slack.StandardAgent.ProgressEnabled || cfg.Slack.StandardAgent.PromptsEnabled || cfg.Slack.StandardAgent.StreamingEnabled) && !cfg.Slack.StandardAgent.ThreadedDM {
+		add("slack.standard_agent.threaded_dm", "must be true when progress, prompts, or streaming are enabled")
+	}
+	if cfg.Slack.StandardAgent.UpdateIntervalSeconds < 3 {
+		add("slack.standard_agent.update_interval_seconds", "must be at least 3")
+	}
+	if len(cfg.Slack.StandardAgent.SuggestedPrompts) > 5 {
+		add("slack.standard_agent.suggested_prompts", "must contain at most 5 prompts")
+	}
+	if cfg.Slack.StandardAgent.PromptsEnabled && len(cfg.Slack.StandardAgent.SuggestedPrompts) == 0 {
+		add("slack.standard_agent.suggested_prompts", "must contain at least one prompt when prompts are enabled")
+	}
+	for index, prompt := range cfg.Slack.StandardAgent.SuggestedPrompts {
+		field := fmt.Sprintf("slack.standard_agent.suggested_prompts[%d]", index)
+		if strings.TrimSpace(prompt) == "" {
+			add(field, "must not be empty")
+		} else if len([]rune(prompt)) > 200 {
+			add(field, "must not exceed 200 Unicode code points")
+		}
+		if strings.ContainsAny(prompt, "\r\n\x00") {
+			add(field, "must be a single line without NUL bytes")
+		}
+	}
 	validateIDs(&problems, "opencode.management.allowed_user_ids", cfg.OpenCode.Management.AllowedUserIDs, slackUserIDPattern, "a plausible Slack user ID beginning with U or W")
 
 	const maxFileBytes = 5 * 1024 * 1024

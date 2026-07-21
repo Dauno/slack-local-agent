@@ -184,6 +184,47 @@ func TestGenerateContentSendsConfiguredChatCompletionAndReturnsOnlyAssistantText
 	}
 }
 
+func TestGenerateContentStreamsTrueTextDeltasAndAuthoritativeFinal(t *testing.T) {
+	t.Parallel()
+	requestBody := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			http.Error(writer, "invalid request", http.StatusBadRequest)
+			return
+		}
+		requestBody <- body
+		writer.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(writer, "data: {\"id\":\"completion-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"provider-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hel\"},\"finish_reason\":\"\"}]}\n\n")
+		fmt.Fprint(writer, "data: {\"id\":\"completion-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"provider-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"\"}]}\n\n")
+		fmt.Fprint(writer, "data: {\"id\":\"completion-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"provider-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		fmt.Fprint(writer, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(server.Close)
+	llm, err := New(WithAPIKey("test-api-key"), WithBaseURL(server.URL+"/v1"), WithModel("configured-model"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var responses []*model.LLMResponse
+	for response, err := range llm.GenerateContent(context.Background(), textRequest(), true) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		responses = append(responses, response)
+	}
+	if len(responses) != 3 || !responses[0].Partial || !responses[1].Partial || responses[2].Partial {
+		t.Fatalf("responses=%#v", responses)
+	}
+	if responses[0].Content.Parts[0].Text != "Hel" || responses[1].Content.Parts[0].Text != "lo" || responses[2].Content.Parts[0].Text != "Hello" || !responses[2].TurnComplete {
+		t.Fatalf("streamed responses=%#v", responses)
+	}
+	body := <-requestBody
+	if body["stream"] != true {
+		t.Fatalf("stream=%#v", body["stream"])
+	}
+}
+
 func TestRequestParamsPreservesTextAndImagePartOrder(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
@@ -381,7 +422,6 @@ func TestGenerateContentRejectsUnsupportedRequestsBeforeHTTP(t *testing.T) {
 		stream bool
 		want   error
 	}{
-		{name: "stream", req: textRequest(), stream: true, want: ErrStreamingUnsupported},
 		{name: "non text part", req: &model.LLMRequest{Contents: []*genai.Content{{Role: genai.RoleUser, Parts: []*genai.Part{genai.NewPartFromBytes([]byte("binary"), "application/pdf")}}}}, want: ErrUnsupportedPart},
 		{name: "thought part", req: &model.LLMRequest{Contents: []*genai.Content{{Role: genai.RoleUser, Parts: []*genai.Part{{Text: "reasoning", Thought: true}}}}}, want: ErrUnsupportedPart},
 		{name: "thought signature", req: &model.LLMRequest{Contents: []*genai.Content{{Role: genai.RoleUser, Parts: []*genai.Part{{Text: "text", ThoughtSignature: []byte("signature")}}}}}, want: ErrUnsupportedPart},
