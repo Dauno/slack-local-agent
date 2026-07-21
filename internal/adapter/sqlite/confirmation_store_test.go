@@ -31,7 +31,7 @@ func TestConfirmationStorePreservesPresentationAndHandlesPublishedRejection(t *t
 	if err := confirmations.CreateDelivery(ctx, delivery); err != nil {
 		t.Fatal(err)
 	}
-	if err := confirmations.MarkPublished(ctx, delivery.WrapperCallID, "correlation"); err != nil {
+	if err := confirmations.MarkPublished(ctx, delivery.WrapperCallID, "correlation", "1234.5678", "test_v1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := confirmations.RejectDelivery(ctx, delivery.WrapperCallID); err != nil {
@@ -42,7 +42,8 @@ func TestConfirmationStorePreservesPresentationAndHandlesPublishedRejection(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil || got.Status != port.ConfirmationRejected || got.Summary != delivery.Summary || got.ParameterHash != delivery.ParameterHash {
+	if got == nil || got.Status != port.ConfirmationRejected || got.Summary != delivery.Summary || got.ParameterHash != delivery.ParameterHash ||
+		got.SlackMessageTS != "1234.5678" || got.RendererMode != "test_v1" {
 		t.Fatalf("delivery = %#v", got)
 	}
 }

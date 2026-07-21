@@ -281,6 +281,7 @@ func (a *Application) Run(ctx context.Context) error {
 	publisher := slackadapter.NewPublisher(api, slackTimeout, logger, cfg.Slack.PartLabels)
 	history := slackadapter.NewHistoryReader(api, auth.UserID, slackTimeout, logger, cfg.Slack.PartLabels)
 	fileLoader := slackadapter.NewFileLoader(api, botToken, slackTimeout)
+	confirmationPublisher := slackadapter.NewConfirmationPublisher(api, auth.UserID, slackTimeout, logger)
 	artifactSvc := artifact.InMemoryService()
 	attachmentInstruction := ""
 	attachmentTimeout := 120 * time.Second
@@ -407,12 +408,13 @@ func (a *Application) Run(ctx context.Context) error {
 	}, botusecase.Dependencies{
 		Store: store, Runtime: runtime, History: history, Publisher: publisher, Logger: logger,
 		ModelCalls: modelCalls, SanitizeContent: redactor.String,
-		Enricher:           contextEnricher,
-		ConfirmationStore:  confirmationStore,
-		FileLoader:         fileLoader,
-		AttachmentProc:     attachmentProc,
-		MaxAttachmentBytes: int64(cfg.Slack.Files.MaxBytesPerFile),
-		MaxAttachmentChars: cfg.Slack.Files.MaxProcessedChars,
+		Enricher:              contextEnricher,
+		ConfirmationStore:     confirmationStore,
+		ConfirmationPublisher: confirmationPublisher,
+		FileLoader:            fileLoader,
+		AttachmentProc:        attachmentProc,
+		MaxAttachmentBytes:    int64(cfg.Slack.Files.MaxBytesPerFile),
+		MaxAttachmentChars:    cfg.Slack.Files.MaxProcessedChars,
 	})
 	if err != nil {
 		return err
@@ -498,6 +500,9 @@ func (a *Application) Run(ctx context.Context) error {
 	} else {
 		logger.Info("using legacy config.Model; migrate to .local-agent/providers/ and .local-agent/agents/ for declarative model configuration")
 	}
+	listener.SetInteractiveHandler(func(ictx context.Context, action domain.ConfirmationInteractiveAction) error {
+		return service.HandleConfirmationInteractive(ictx, action)
+	})
 	err = listener.Run(ctx, func(eventCtx context.Context, invocation domain.Invocation) {
 		if _, handleErr := service.Handle(eventCtx, invocation); handleErr != nil {
 			logger.Error("Slack invocation processing failed", "event_id", invocation.EventID, "error", handleErr)

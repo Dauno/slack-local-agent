@@ -2,7 +2,10 @@ package port
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Dauno/slack-local-agent/internal/domain"
@@ -256,7 +259,32 @@ type ConfirmationDelivery struct {
 	ParameterHash   string
 	Status          ConfirmationDeliveryStatus
 	CorrelationID   string
+	SlackMessageTS  string
+	RendererMode    string
 	Expiry          time.Time
+}
+
+// ConfirmationContentDigest binds a rendered confirmation to its durable
+// identity and presentation without exposing tool parameters.
+func ConfirmationContentDigest(delivery ConfirmationDelivery) string {
+	canonical, _ := json.Marshal(struct {
+		WrapperCallID  string `json:"wrapper_call_id"`
+		OriginalCallID string `json:"original_call_id"`
+		Actor          string `json:"actor"`
+		TeamID         string `json:"team_id"`
+		ChannelID      string `json:"channel_id"`
+		ThreadTS       string `json:"thread_ts"`
+		Summary        string `json:"summary"`
+		ParameterHash  string `json:"parameter_hash"`
+		Expiry         int64  `json:"expiry"`
+	}{
+		WrapperCallID: delivery.WrapperCallID, OriginalCallID: delivery.OriginalCallID,
+		Actor: delivery.Actor, TeamID: delivery.TeamID, ChannelID: delivery.ChannelID,
+		ThreadTS: delivery.ThreadTS, Summary: delivery.Summary,
+		ParameterHash: delivery.ParameterHash, Expiry: delivery.Expiry.Unix(),
+	})
+	digest := sha256.Sum256(canonical)
+	return fmt.Sprintf("%x", digest)
 }
 
 type ConfirmationDeliveryStatus string
@@ -274,12 +302,26 @@ const (
 // ConfirmationDeliveryStore persists and retrieves confirmation deliveries.
 type ConfirmationDeliveryStore interface {
 	CreateDelivery(ctx context.Context, delivery ConfirmationDelivery) error
-	MarkPublished(ctx context.Context, wrapperCallID, correlationID string) error
+	MarkPublished(ctx context.Context, wrapperCallID, correlationID, slackMessageTS, rendererMode string) error
 	MarkConsumed(ctx context.Context, wrapperCallID string) error
 	RejectDelivery(ctx context.Context, wrapperCallID string) error
 	GetByWrapperCallID(ctx context.Context, wrapperCallID string) (*ConfirmationDelivery, error)
 	ListPending(ctx context.Context) ([]ConfirmationDelivery, error)
 	ExpireDeliveries(ctx context.Context, now time.Time) error
+}
+
+// ConfirmationPublisher publishes and updates confirmation prompts using
+// provider-specific rich presentation (e.g. Slack Block Kit buttons).
+type ConfirmationPublisher interface {
+	PublishConfirmation(ctx context.Context, delivery ConfirmationDelivery) (ConfirmationPublishedResult, error)
+	RecoverConfirmation(ctx context.Context, delivery ConfirmationDelivery) (ConfirmationPublishedResult, bool, error)
+	UpdateConfirmation(ctx context.Context, delivery ConfirmationDelivery, terminalText string) error
+}
+
+// ConfirmationPublishedResult carries the opaque message identifier
+// returned by the provider when a confirmation prompt is published.
+type ConfirmationPublishedResult struct {
+	SlackMessageTS string
 }
 
 // ExternalAgentRuntime invokes an ACP-compatible external agent.

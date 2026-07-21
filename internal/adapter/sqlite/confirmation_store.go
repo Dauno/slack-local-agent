@@ -46,8 +46,8 @@ func (s *ConfirmationStore) CreateDelivery(ctx context.Context, delivery port.Co
 		`INSERT INTO tool_confirmation_deliveries
 		 (wrapper_call_id, original_call_id, session_id, actor, slack_team_id,
 		  slack_channel_id, slack_thread_ts, presentation, expiry,
-		  status, correlation_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		  status, correlation_id, slack_message_ts, renderer_mode, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(wrapper_call_id) DO NOTHING`,
 		delivery.WrapperCallID,
 		delivery.OriginalCallID,
@@ -60,19 +60,21 @@ func (s *ConfirmationStore) CreateDelivery(ctx context.Context, delivery port.Co
 		delivery.Expiry.Unix(),
 		string(delivery.Status),
 		delivery.CorrelationID,
+		delivery.SlackMessageTS,
+		delivery.RendererMode,
 		now.Unix(),
 		now.Unix(),
 	)
 	return err
 }
 
-func (s *ConfirmationStore) MarkPublished(ctx context.Context, wrapperCallID, correlationID string) error {
+func (s *ConfirmationStore) MarkPublished(ctx context.Context, wrapperCallID, correlationID, slackMessageTS, rendererMode string) error {
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE tool_confirmation_deliveries
-		 SET status = ?, correlation_id = ?, updated_at = ?
+		 SET status = ?, correlation_id = ?, slack_message_ts = ?, renderer_mode = ?, updated_at = ?
 		 WHERE wrapper_call_id = ? AND status = ?`,
-		string(port.ConfirmationPublished), correlationID, now.Unix(),
+		string(port.ConfirmationPublished), correlationID, slackMessageTS, rendererMode, now.Unix(),
 		wrapperCallID, string(port.ConfirmationPending),
 	)
 	if err != nil {
@@ -130,15 +132,17 @@ func (s *ConfirmationStore) GetByWrapperCallID(ctx context.Context, wrapperCallI
 	var (
 		originalCallID, sessionID, actor, teamID, channelID, threadTS string
 		presentationJSON, status, correlationID                       string
+		slackMessageTS, rendererMode                                  string
 		expiryUnix                                                    int64
 	)
 	err := s.db.QueryRowContext(ctx,
 		`SELECT original_call_id, session_id, actor, slack_team_id,
-		 slack_channel_id, slack_thread_ts, presentation, status, correlation_id, expiry
+		 slack_channel_id, slack_thread_ts, presentation, status, correlation_id,
+		 slack_message_ts, renderer_mode, expiry
 		 FROM tool_confirmation_deliveries
 		 WHERE wrapper_call_id = ?`,
 		wrapperCallID,
-	).Scan(&originalCallID, &sessionID, &actor, &teamID, &channelID, &threadTS, &presentationJSON, &status, &correlationID, &expiryUnix)
+	).Scan(&originalCallID, &sessionID, &actor, &teamID, &channelID, &threadTS, &presentationJSON, &status, &correlationID, &slackMessageTS, &rendererMode, &expiryUnix)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -168,6 +172,8 @@ func (s *ConfirmationStore) GetByWrapperCallID(ctx context.Context, wrapperCallI
 		ParameterHash:   presentation.ParameterHash,
 		Status:          port.ConfirmationDeliveryStatus(status),
 		CorrelationID:   correlationID,
+		SlackMessageTS:  slackMessageTS,
+		RendererMode:    rendererMode,
 		Expiry:          time.Unix(expiryUnix, 0),
 	}, nil
 }
@@ -175,7 +181,8 @@ func (s *ConfirmationStore) GetByWrapperCallID(ctx context.Context, wrapperCallI
 func (s *ConfirmationStore) ListPending(ctx context.Context) ([]port.ConfirmationDelivery, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT wrapper_call_id, original_call_id, session_id, actor,
-		 slack_team_id, slack_channel_id, slack_thread_ts, presentation, status, correlation_id, expiry
+		 slack_team_id, slack_channel_id, slack_thread_ts, presentation, status, correlation_id,
+		 slack_message_ts, renderer_mode, expiry
 		 FROM tool_confirmation_deliveries
 		 WHERE (status = ? OR status = ?) AND expiry > ?
 		 ORDER BY created_at ASC`,
@@ -190,9 +197,11 @@ func (s *ConfirmationStore) ListPending(ctx context.Context) ([]port.Confirmatio
 	for rows.Next() {
 		var d port.ConfirmationDelivery
 		var presentationJSON, status, correlationID string
+		var slackMessageTS, rendererMode string
 		var expiryUnix int64
 		if err := rows.Scan(&d.WrapperCallID, &d.OriginalCallID, &d.SessionID, &d.Actor,
-			&d.TeamID, &d.ChannelID, &d.ThreadTS, &presentationJSON, &status, &correlationID, &expiryUnix,
+			&d.TeamID, &d.ChannelID, &d.ThreadTS, &presentationJSON, &status, &correlationID,
+			&slackMessageTS, &rendererMode, &expiryUnix,
 		); err != nil {
 			return nil, fmt.Errorf("scan confirmation row: %w", err)
 		}
@@ -207,6 +216,8 @@ func (s *ConfirmationStore) ListPending(ctx context.Context) ([]port.Confirmatio
 		d.Summary = presentation.Summary
 		d.ParameterHash = presentation.ParameterHash
 		d.CorrelationID = correlationID
+		d.SlackMessageTS = slackMessageTS
+		d.RendererMode = rendererMode
 		d.Expiry = time.Unix(expiryUnix, 0)
 		d.ConversationKey = deliveryConversationKey(d.TeamID, d.ChannelID, d.ThreadTS)
 		deliveries = append(deliveries, d)

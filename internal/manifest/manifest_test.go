@@ -33,6 +33,9 @@ func TestRenderIncludesIdentitySocketModeScopesAndEvents(t *testing.T) {
 			} `yaml:"scopes"`
 		} `yaml:"oauth_config"`
 		Settings struct {
+			Interactivity struct {
+				IsEnabled bool `yaml:"is_enabled"`
+			} `yaml:"interactivity"`
 			EventSubscriptions struct {
 				BotEvents []string `yaml:"bot_events"`
 			} `yaml:"event_subscriptions"`
@@ -51,6 +54,9 @@ func TestRenderIncludesIdentitySocketModeScopesAndEvents(t *testing.T) {
 	}
 	if !parsed.Settings.SocketModeEnabled {
 		t.Fatal("Socket Mode is not enabled")
+	}
+	if !parsed.Settings.Interactivity.IsEnabled {
+		t.Fatal("interactivity is not enabled")
 	}
 
 	wantScopes := []string{

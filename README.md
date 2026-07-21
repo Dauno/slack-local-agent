@@ -105,6 +105,10 @@ local-agent manifest --write
 local-agent version
 ```
 
+After upgrading, run `local-agent manifest --write`, apply the generated
+manifest to the Slack app, and reinstall the app when Slack requests it. This
+enables interactive confirmation buttons for existing installations.
+
 ## Configuration
 
 Non-sensitive settings live in `.local-agent/config.yaml`. Missing YAML fields

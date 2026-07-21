@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
@@ -38,9 +39,10 @@ func (c sdkSocketClient) Ack(ctx context.Context, request socketmode.Request) er
 // Listener owns the Socket Mode lifecycle and its acknowledge-before-dispatch
 // boundary. Handler work is launched asynchronously with the listener context.
 type Listener struct {
-	client socketClient
-	router Router
-	logger port.Logger
+	client             socketClient
+	router             Router
+	logger             port.Logger
+	interactiveHandler func(context.Context, domain.ConfirmationInteractiveAction) error
 }
 
 func NewListener(client *socketmode.Client, router Router, logger port.Logger) *Listener {
@@ -53,6 +55,13 @@ func NewListener(client *socketmode.Client, router Router, logger port.Logger) *
 
 func newListener(client socketClient, router Router, logger port.Logger) *Listener {
 	return &Listener{client: client, router: router, logger: loggerOrDiscard(logger)}
+}
+
+func (l *Listener) SetInteractiveHandler(handler func(context.Context, domain.ConfirmationInteractiveAction) error) {
+	if l == nil {
+		return
+	}
+	l.interactiveHandler = handler
 }
 
 // Run blocks until the context is canceled or the Socket Mode client stops.
@@ -105,38 +114,83 @@ func (l *Listener) Run(ctx context.Context, handler func(context.Context, domain
 				}
 				return fmt.Errorf("run Slack Socket Mode client: %w", err)
 			}
-			if event.Type != socketmode.EventTypeEventsAPI {
-				continue
-			}
-			if event.Request == nil {
-				l.logger.Warn("Slack event ignored because its Socket Mode request is missing")
-				continue
-			}
 
-			// Acknowledge every Events API envelope before parsing or dispatching it.
-			if err := l.client.Ack(runCtx, *event.Request); err != nil {
-				l.logger.Error("Slack Socket Mode acknowledgement failed", "envelope_id", event.Request.EnvelopeID, "error", err)
-				if runCtx.Err() != nil {
-					continue
-				}
+			switch event.Type {
+			case socketmode.EventTypeInteractive:
+				l.handleInteractive(runCtx, event, &handlers)
+			case socketmode.EventTypeEventsAPI:
+				l.handleEventsAPI(runCtx, event, &handlers, handler)
 			}
-
-			apiEvent, ok := event.Data.(slackevents.EventsAPIEvent)
-			if !ok {
-				l.logger.Debug("unsupported Slack Events API payload ignored")
-				continue
-			}
-			invocation, ok := l.router.Route(apiEvent)
-			if !ok {
-				l.logger.Debug("unsupported Slack event ignored", "event_type", apiEvent.InnerEvent.Type)
-				continue
-			}
-
-			handlers.Add(1)
-			go func() {
-				defer handlers.Done()
-				handler(runCtx, invocation)
-			}()
 		}
 	}
+}
+
+func (l *Listener) handleInteractive(ctx context.Context, event socketmode.Event, handlers *sync.WaitGroup) {
+	if event.Request == nil {
+		l.logger.Warn("Slack interactive event ignored because its Socket Mode request is missing")
+		return
+	}
+
+	if err := l.client.Ack(ctx, *event.Request); err != nil {
+		l.logger.Error("Slack Socket Mode interactive acknowledgement failed", "envelope_id", event.Request.EnvelopeID, "error", err)
+		if ctx.Err() != nil {
+			return
+		}
+	}
+
+	callback, ok := event.Data.(slack.InteractionCallback)
+	if !ok {
+		l.logger.Debug("unsupported Slack interactive payload ignored")
+		return
+	}
+
+	action, ok := normalizeInteractiveAction(&callback)
+	if !ok {
+		l.logger.Debug("non-confirmation interactive action ignored", "action_id", callback.ActionID)
+		return
+	}
+
+	if l.interactiveHandler == nil {
+		l.logger.Warn("interactive handler not configured, ignoring confirmation action")
+		return
+	}
+
+	handlers.Add(1)
+	go func() {
+		defer handlers.Done()
+		if err := l.interactiveHandler(ctx, action); err != nil {
+			l.logger.Warn("interactive handler returned error", "error", err)
+		}
+	}()
+}
+
+func (l *Listener) handleEventsAPI(ctx context.Context, event socketmode.Event, handlers *sync.WaitGroup, handler func(context.Context, domain.Invocation)) {
+	if event.Request == nil {
+		l.logger.Warn("Slack event ignored because its Socket Mode request is missing")
+		return
+	}
+
+	if err := l.client.Ack(ctx, *event.Request); err != nil {
+		l.logger.Error("Slack Socket Mode acknowledgement failed", "envelope_id", event.Request.EnvelopeID, "error", err)
+		if ctx.Err() != nil {
+			return
+		}
+	}
+
+	apiEvent, ok := event.Data.(slackevents.EventsAPIEvent)
+	if !ok {
+		l.logger.Debug("unsupported Slack Events API payload ignored")
+		return
+	}
+	invocation, ok := l.router.Route(apiEvent)
+	if !ok {
+		l.logger.Debug("unsupported Slack event ignored", "event_type", apiEvent.InnerEvent.Type)
+		return
+	}
+
+	handlers.Add(1)
+	go func() {
+		defer handlers.Done()
+		handler(ctx, invocation)
+	}()
 }

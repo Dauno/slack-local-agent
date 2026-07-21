@@ -146,15 +146,19 @@ type fakeConfirmationStore struct {
 func (*fakeConfirmationStore) CreateDelivery(context.Context, port.ConfirmationDelivery) error {
 	return nil
 }
-func (s *fakeConfirmationStore) MarkPublished(_ context.Context, wrapperCallID, correlationID string) error {
+func (s *fakeConfirmationStore) MarkPublished(_ context.Context, wrapperCallID, correlationID, slackMessageTS, rendererMode string) error {
 	if s.delivery != nil && s.delivery.WrapperCallID == wrapperCallID {
 		s.delivery.Status = port.ConfirmationPublished
 		s.delivery.CorrelationID = correlationID
+		s.delivery.SlackMessageTS = slackMessageTS
+		s.delivery.RendererMode = rendererMode
 	}
 	for index := range s.pending {
 		if s.pending[index].WrapperCallID == wrapperCallID {
 			s.pending[index].Status = port.ConfirmationPublished
 			s.pending[index].CorrelationID = correlationID
+			s.pending[index].SlackMessageTS = slackMessageTS
+			s.pending[index].RendererMode = rendererMode
 		}
 	}
 	return nil
@@ -174,6 +178,32 @@ func (s *fakeConfirmationStore) ListPending(context.Context) ([]port.Confirmatio
 	return append([]port.ConfirmationDelivery(nil), s.pending...), nil
 }
 func (*fakeConfirmationStore) ExpireDeliveries(context.Context, time.Time) error { return nil }
+
+type fakeConfirmationPublisher struct {
+	published []port.ConfirmationDelivery
+	updated   []port.ConfirmationDelivery
+	recovered port.ConfirmationPublishedResult
+	found     bool
+	err       error
+	updateErr error
+}
+
+func (p *fakeConfirmationPublisher) PublishConfirmation(_ context.Context, delivery port.ConfirmationDelivery) (port.ConfirmationPublishedResult, error) {
+	p.published = append(p.published, delivery)
+	if p.err != nil {
+		return port.ConfirmationPublishedResult{}, p.err
+	}
+	return port.ConfirmationPublishedResult{SlackMessageTS: "1700000001.000001"}, nil
+}
+
+func (p *fakeConfirmationPublisher) RecoverConfirmation(context.Context, port.ConfirmationDelivery) (port.ConfirmationPublishedResult, bool, error) {
+	return p.recovered, p.found, p.err
+}
+
+func (p *fakeConfirmationPublisher) UpdateConfirmation(_ context.Context, delivery port.ConfirmationDelivery, _ string) error {
+	p.updated = append(p.updated, delivery)
+	return p.updateErr
+}
 
 type fakeExchangeFinder struct {
 	found bool
@@ -406,6 +436,169 @@ func TestHandleConfirmationBindsActorAndConversation(t *testing.T) {
 	}
 	if runtime.resumeCalls != 1 {
 		t.Fatalf("cross-conversation confirmation resumed %d times", runtime.resumeCalls)
+	}
+}
+
+func richConfirmationDelivery(t *testing.T) port.ConfirmationDelivery {
+	t.Helper()
+	invocation := botInvocation()
+	key, err := invocation.ConversationKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return port.ConfirmationDelivery{
+		WrapperCallID: "wrapper", OriginalCallID: "original", SessionID: "adk:" + string(key),
+		Actor: invocation.UserID, TeamID: invocation.TeamID, ChannelID: invocation.ChannelID,
+		ConversationKey: key, Summary: "Delete worktree", ParameterHash: "abc123",
+		Status: port.ConfirmationPublished, CorrelationID: "confirmation:wrapper",
+		SlackMessageTS: "1700000001.000001", RendererMode: confirmationRendererMode,
+		Expiry: time.Unix(1700003600, 0),
+	}
+}
+
+func richConfirmationAction(delivery port.ConfirmationDelivery) domain.ConfirmationInteractiveAction {
+	return domain.ConfirmationInteractiveAction{
+		WrapperCallID: delivery.WrapperCallID, ConversationKey: delivery.ConversationKey,
+		Actor: delivery.Actor, TeamID: delivery.TeamID, ChannelID: delivery.ChannelID,
+		MessageTS: delivery.SlackMessageTS, ThreadTS: delivery.ThreadTS,
+		CorrelationID: delivery.CorrelationID, RendererMode: delivery.RendererMode,
+		ContentSHA256: port.ConfirmationContentDigest(delivery), Approved: true,
+	}
+}
+
+func TestHandleInteractiveConfirmationBindsPublishedMessageAndPublishesResult(t *testing.T) {
+	delivery := richConfirmationDelivery(t)
+	confirmations := &fakeConfirmationStore{delivery: &delivery}
+	runtime := &fakeRuntime{resumeTurn: port.AgentTurn{Text: "completed"}}
+	publisher := &fakePublisher{}
+	richPublisher := &fakeConfirmationPublisher{}
+	service := newTestServiceWithConfirmations(t, &fakeStore{recent: make(map[domain.ConversationKey][]domain.Message)}, runtime, &fakeHistory{}, publisher, confirmations, nil)
+	service.confirmationPublisher = richPublisher
+	action := richConfirmationAction(delivery)
+	action.CorrelationID = ""
+	action.RendererMode = ""
+	action.ContentSHA256 = ""
+
+	if err := service.HandleConfirmationInteractive(t.Context(), action); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.resumeCalls != 1 {
+		t.Fatalf("resume calls = %d, want 1", runtime.resumeCalls)
+	}
+	if len(richPublisher.updated) != 1 || richPublisher.updated[0].Status != port.ConfirmationConsumed {
+		t.Fatalf("terminal updates = %#v", richPublisher.updated)
+	}
+	if len(publisher.calls) != 1 || publisher.calls[0].text != "completed" || publisher.calls[0].target.ChannelID != delivery.ChannelID {
+		t.Fatalf("result publishes = %#v", publisher.calls)
+	}
+}
+
+func TestHandleInteractiveConfirmationRejectsSpoofedMessage(t *testing.T) {
+	delivery := richConfirmationDelivery(t)
+	confirmations := &fakeConfirmationStore{delivery: &delivery}
+	runtime := &fakeRuntime{resumeTurn: port.AgentTurn{Text: "completed"}}
+	service := newTestServiceWithConfirmations(t, &fakeStore{recent: make(map[domain.ConversationKey][]domain.Message)}, runtime, &fakeHistory{}, &fakePublisher{}, confirmations, nil)
+	service.confirmationPublisher = &fakeConfirmationPublisher{}
+	action := richConfirmationAction(delivery)
+	action.MessageTS = "1700000009.000009"
+
+	if err := service.HandleConfirmationInteractive(t.Context(), action); err == nil {
+		t.Fatal("spoofed message interaction returned nil")
+	}
+	if runtime.resumeCalls != 0 {
+		t.Fatalf("spoofed interaction resumed %d times", runtime.resumeCalls)
+	}
+}
+
+func TestHandleInteractiveConfirmationUpdateFailureDoesNotReplayDecision(t *testing.T) {
+	delivery := richConfirmationDelivery(t)
+	confirmations := &fakeConfirmationStore{delivery: &delivery}
+	runtime := &fakeRuntime{resumeTurn: port.AgentTurn{Text: "completed"}}
+	publisher := &fakePublisher{}
+	service := newTestServiceWithConfirmations(t, &fakeStore{recent: make(map[domain.ConversationKey][]domain.Message)}, runtime, &fakeHistory{}, publisher, confirmations, nil)
+	service.confirmationPublisher = &fakeConfirmationPublisher{updateErr: errors.New("Slack update failed")}
+
+	if err := service.HandleConfirmationInteractive(t.Context(), richConfirmationAction(delivery)); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.resumeCalls != 1 || delivery.Status != port.ConfirmationConsumed || len(publisher.calls) != 1 {
+		t.Fatalf("resume calls = %d, status = %q, publishes = %#v", runtime.resumeCalls, delivery.Status, publisher.calls)
+	}
+	if err := service.HandleConfirmationInteractive(t.Context(), richConfirmationAction(delivery)); err == nil {
+		t.Fatal("replayed interaction returned nil")
+	}
+	if runtime.resumeCalls != 1 {
+		t.Fatalf("replayed interaction resumed %d times", runtime.resumeCalls)
+	}
+}
+
+func TestHandleInteractiveConfirmationUpdatesExpiredPrompt(t *testing.T) {
+	delivery := richConfirmationDelivery(t)
+	delivery.Expiry = time.Unix(1699999999, 0)
+	action := richConfirmationAction(delivery)
+	confirmations := &fakeConfirmationStore{delivery: &delivery}
+	runtime := &fakeRuntime{resumeTurn: port.AgentTurn{Text: "completed"}}
+	richPublisher := &fakeConfirmationPublisher{}
+	service := newTestServiceWithConfirmations(t, &fakeStore{recent: make(map[domain.ConversationKey][]domain.Message)}, runtime, &fakeHistory{}, &fakePublisher{}, confirmations, nil)
+	service.confirmationPublisher = richPublisher
+
+	if err := service.HandleConfirmationInteractive(t.Context(), action); err == nil {
+		t.Fatal("expired interaction returned nil")
+	}
+	if runtime.resumeCalls != 0 || len(richPublisher.updated) != 1 || richPublisher.updated[0].Status != port.ConfirmationExpired {
+		t.Fatalf("resume calls = %d, updates = %#v", runtime.resumeCalls, richPublisher.updated)
+	}
+}
+
+func TestHandleInteractiveConfirmationChecksCurrentAuthorization(t *testing.T) {
+	delivery := richConfirmationDelivery(t)
+	confirmations := &fakeConfirmationStore{delivery: &delivery}
+	runtime := &fakeRuntime{resumeTurn: port.AgentTurn{Text: "completed"}}
+	service := newTestServiceWithConfirmations(t, &fakeStore{recent: make(map[domain.ConversationKey][]domain.Message)}, runtime, &fakeHistory{}, &fakePublisher{}, confirmations, func(cfg *Config) {
+		cfg.AccessPolicy.AllowedUserIDs = []string{"U99999999"}
+	})
+	service.confirmationPublisher = &fakeConfirmationPublisher{}
+
+	if err := service.HandleConfirmationInteractive(t.Context(), richConfirmationAction(delivery)); err == nil {
+		t.Fatal("unauthorized interaction returned nil")
+	}
+	if runtime.resumeCalls != 0 {
+		t.Fatalf("unauthorized interaction resumed %d times", runtime.resumeCalls)
+	}
+}
+
+func TestHandleConfirmationRejectsTypedCommandForRichPrompt(t *testing.T) {
+	delivery := richConfirmationDelivery(t)
+	confirmations := &fakeConfirmationStore{delivery: &delivery}
+	runtime := &fakeRuntime{resumeTurn: port.AgentTurn{Text: "completed"}}
+	publisher := &fakePublisher{}
+	service := newTestServiceWithConfirmations(t, &fakeStore{recent: make(map[domain.ConversationKey][]domain.Message)}, runtime, &fakeHistory{}, publisher, confirmations, nil)
+
+	if outcome := service.HandleConfirmation(t.Context(), botInvocation(), delivery.WrapperCallID, true); outcome != OutcomeIgnoredFollowup {
+		t.Fatalf("HandleConfirmation() = %q", outcome)
+	}
+	if runtime.resumeCalls != 0 || len(publisher.calls) != 1 || !strings.Contains(publisher.calls[0].text, "buttons") {
+		t.Fatalf("runtime calls = %d, publishes = %#v", runtime.resumeCalls, publisher.calls)
+	}
+}
+
+func TestReconcileRichConfirmationRecoversPublishedTimestamp(t *testing.T) {
+	delivery := richConfirmationDelivery(t)
+	delivery.Status = port.ConfirmationPending
+	delivery.SlackMessageTS = ""
+	confirmations := &fakeConfirmationStore{pending: []port.ConfirmationDelivery{delivery}}
+	richPublisher := &fakeConfirmationPublisher{
+		recovered: port.ConfirmationPublishedResult{SlackMessageTS: "1700000001.000001"},
+		found:     true,
+	}
+	service := newTestServiceWithConfirmations(t, &fakeStore{recent: make(map[domain.ConversationKey][]domain.Message)}, &fakeRuntime{}, &fakeHistory{}, &fakePublisher{}, confirmations, nil)
+	service.confirmationPublisher = richPublisher
+
+	if err := service.ReconcileConfirmations(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(richPublisher.published) != 0 || confirmations.pending[0].SlackMessageTS != "1700000001.000001" || confirmations.pending[0].Status != port.ConfirmationPublished {
+		t.Fatalf("reconciled delivery = %#v, publishes = %#v", confirmations.pending[0], richPublisher.published)
 	}
 }
 
