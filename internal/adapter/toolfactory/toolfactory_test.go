@@ -14,6 +14,7 @@ import (
 	"github.com/Dauno/slack-local-agent/internal/adapter/toolfactory"
 	"github.com/Dauno/slack-local-agent/internal/domain"
 	"github.com/Dauno/slack-local-agent/internal/port"
+	canvasusecase "github.com/Dauno/slack-local-agent/internal/usecase/canvas"
 	sandboxusecase "github.com/Dauno/slack-local-agent/internal/usecase/sandbox"
 )
 
@@ -59,6 +60,22 @@ type stubExecutor struct {
 	operations      []sandboxusecase.SandboxOperation
 }
 
+type stubCanvasCreator struct{}
+
+func (stubCanvasCreator) CreateCanvas(context.Context, string, string) (port.CanvasCreateResult, error) {
+	return port.CanvasCreateResult{CanvasID: "F123"}, nil
+}
+
+type stubCanvasStore struct{}
+
+func (stubCanvasStore) CreateOperation(context.Context, domain.CanvasOperation) error { return nil }
+func (stubCanvasStore) UpdateOperationStatus(context.Context, string, domain.CanvasOperationStatus, string) error {
+	return nil
+}
+func (stubCanvasStore) GetOperation(context.Context, string) (*domain.CanvasOperation, error) {
+	return nil, nil
+}
+
 func (s *stubExecutor) Execute(_ context.Context, op sandboxusecase.SandboxOperation) (sandboxusecase.SandboxResult, error) {
 	s.operations = append(s.operations, op)
 	switch op.Capability {
@@ -98,7 +115,7 @@ type runnableFunctionTool interface {
 
 func TestFactoryWithoutSandboxExposesOnlyConversationTools(t *testing.T) {
 	store := &stubConversationStore{}
-	f := toolfactory.New(store, nil)
+	f := toolfactory.New(store, nil, nil)
 	if f == nil {
 		t.Fatal("factory should not be nil")
 	}
@@ -128,7 +145,7 @@ func TestFactoryWithSandboxExposesAllReadOnlyTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := toolfactory.New(store, sb)
+	f := toolfactory.New(store, sb, nil)
 	if f == nil {
 		t.Fatal("factory should not be nil")
 	}
@@ -212,8 +229,28 @@ func TestFactoryWithSandboxExposesAllReadOnlyTools(t *testing.T) {
 	}
 }
 
+func TestFactoryExposesCanvasWithoutSandbox(t *testing.T) {
+	svc, err := canvasusecase.New(canvasusecase.Config{}, canvasusecase.Dependencies{
+		Creator: stubCanvasCreator{}, Store: stubCanvasStore{}, SanitizeContent: func(value string) string { return value },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := toolfactory.New(&stubConversationStore{}, nil, svc)
+	tools, err := f.ToolsForInvocation("U12345678", "slack:T12345678:dm:D12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 2 {
+		t.Fatalf("tools = %d, want list_messages and create_canvas", len(tools))
+	}
+	if named, ok := tools[1].(interface{ Name() string }); !ok || named.Name() != "create_canvas" {
+		t.Fatalf("second tool = %T, want create_canvas", tools[1])
+	}
+}
+
 func TestFactoryNilStoreReturnsNil(t *testing.T) {
-	f := toolfactory.New(nil, nil)
+	f := toolfactory.New(nil, nil, nil)
 	if f != nil {
 		t.Fatal("factory with nil store should be nil")
 	}

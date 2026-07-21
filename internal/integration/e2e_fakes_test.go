@@ -385,7 +385,7 @@ func newE2EService(t *testing.T, opts ...e2eServiceOption) *e2eDeps {
 		}
 	}
 
-	toolFact = toolfactory.New(store, sandboxService)
+	toolFact = toolfactory.New(store, sandboxService, nil)
 
 	// ADK Runtime.
 	runtime, err := adkagent.NewRuntime(adkagent.RuntimeConfig{

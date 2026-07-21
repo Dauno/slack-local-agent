@@ -12,6 +12,9 @@ oauth_config:
       - channels:history
       - channels:read
       - chat:write
+{{- if .CanvasesEnabled }}
+      - canvases:write
+{{- end }}
       - files:read
       - groups:history
       - groups:read

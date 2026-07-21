@@ -354,3 +354,27 @@ type OpenCodeCoordinator interface {
 	TryInvocation() (release func(), acquired bool)
 	TryMaintenance() (release func(), acquired bool)
 }
+
+type CanvasCreateResult struct {
+	CanvasID string
+}
+
+type CanvasCreateError struct {
+	Err       error
+	Ambiguous bool
+}
+
+func (e *CanvasCreateError) Error() string { return e.Err.Error() }
+func (e *CanvasCreateError) Unwrap() error { return e.Err }
+
+type CanvasCreator interface {
+	CreateCanvas(ctx context.Context, title string, documentContent string) (CanvasCreateResult, error)
+}
+
+type CanvasOperationStore interface {
+	CreateOperation(ctx context.Context, op domain.CanvasOperation) error
+	UpdateOperationStatus(ctx context.Context, operationID string, status domain.CanvasOperationStatus, canvasID string) error
+	GetOperation(ctx context.Context, operationID string) (*domain.CanvasOperation, error)
+}
+
+var ErrCanvasOperationExists = errors.New("canvas operation already exists")

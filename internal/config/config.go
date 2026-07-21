@@ -28,6 +28,7 @@ type Config struct {
 	Slack    SlackConfig    `yaml:"slack"`
 	Memory   MemoryConfig   `yaml:"memory"`
 	Sandbox  SandboxConfig  `yaml:"sandbox"`
+	Canvases CanvasesConfig `yaml:"canvases"`
 	OpenCode OpenCodeConfig `yaml:"opencode"`
 
 	document *sourceDocument
@@ -123,6 +124,14 @@ type SandboxConfig struct {
 	MaxOutputBytes        int               `yaml:"max_output_bytes"`
 }
 
+type CanvasesConfig struct {
+	Enabled           bool `yaml:"enabled"`
+	MaxTitleChars     int  `yaml:"max_title_chars"`
+	MaxContentChars   int  `yaml:"max_content_chars"`
+	MaxContentBytes   int  `yaml:"max_content_bytes"`
+	TimeoutSeconds    int  `yaml:"timeout_seconds"`
+}
+
 // Default returns a new Config populated with the PRD defaults.
 func Default() Config {
 	return Config{
@@ -194,6 +203,7 @@ func Default() Config {
 			MaxPatchOps:           10,
 		},
 		Sandbox:  SandboxConfig{Projects: map[string]string{}, CommandTimeoutSeconds: 30, MaxOutputBytes: 64 * 1024},
+		Canvases: CanvasesConfig{MaxTitleChars: 150, MaxContentChars: 50000, MaxContentBytes: 5 * 1024 * 1024, TimeoutSeconds: 30},
 		OpenCode: OpenCodeConfig{Management: OpenCodeManagementConfig{AllowedUserIDs: []string{}}},
 	}
 }

@@ -219,6 +219,20 @@ func Validate(cfg Config) error {
 			add("sandbox.max_output_bytes", "must be greater than zero when enabled")
 		}
 	}
+	if cfg.Canvases.Enabled {
+		if cfg.Canvases.MaxTitleChars <= 0 {
+			add("canvases.max_title_chars", "must be greater than zero when enabled")
+		}
+		if cfg.Canvases.MaxContentChars <= 0 {
+			add("canvases.max_content_chars", "must be greater than zero when enabled")
+		}
+		if cfg.Canvases.MaxContentBytes <= 0 {
+			add("canvases.max_content_bytes", "must be greater than zero when enabled")
+		}
+		if cfg.Canvases.TimeoutSeconds <= 0 {
+			add("canvases.timeout_seconds", "must be greater than zero when enabled")
+		}
+	}
 
 	if len(problems) > 0 {
 		return &ValidationError{Fields: problems}

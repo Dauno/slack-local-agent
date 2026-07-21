@@ -21,6 +21,7 @@ var migrations = map[int]migrationFunc{
 	10: migrateV10,
 	11: migrateV11,
 	12: migrateV12,
+	13: migrateV13,
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {

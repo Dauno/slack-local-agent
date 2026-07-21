@@ -12,7 +12,7 @@ import (
 func TestRenderIncludesIdentitySocketModeScopesAndEvents(t *testing.T) {
 	t.Parallel()
 
-	identity := Identity{AppName: "Local Agent: Dev", BotDisplayName: "Dev #1"}
+	identity := Identity{AppName: "Local Agent: Dev", BotDisplayName: "Dev #1", CanvasesEnabled: true}
 	got, err := Render(identity)
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
@@ -64,6 +64,7 @@ func TestRenderIncludesIdentitySocketModeScopesAndEvents(t *testing.T) {
 		"channels:history",
 		"channels:read",
 		"chat:write",
+		"canvases:write",
 		"files:read",
 		"groups:history",
 		"groups:read",
@@ -123,6 +124,16 @@ func TestCreationURLRoundTripsRenderedManifest(t *testing.T) {
 	}
 	if combined != creationURL {
 		t.Fatal("RenderCreationURL() differs from Render() plus CreationURL()")
+	}
+}
+
+func TestRenderOmitsCanvasScopeWhenDisabled(t *testing.T) {
+	rendered, err := Render(Identity{AppName: "Local Agent", BotDisplayName: "Dev Agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rendered, "canvases:write") {
+		t.Fatal("disabled Canvas feature requested canvases:write")
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"github.com/Dauno/slack-local-agent/internal/secure"
 	"github.com/Dauno/slack-local-agent/internal/usecase/bootstrap"
 	botusecase "github.com/Dauno/slack-local-agent/internal/usecase/bot"
+	canvasusecase "github.com/Dauno/slack-local-agent/internal/usecase/canvas"
 	memoryusecase "github.com/Dauno/slack-local-agent/internal/usecase/memory"
 	opencodeusecase "github.com/Dauno/slack-local-agent/internal/usecase/opencode"
 	sandboxusecase "github.com/Dauno/slack-local-agent/internal/usecase/sandbox"
@@ -262,10 +264,16 @@ func (a *Application) Run(ctx context.Context) error {
 	modelCalls := modelcalllimiter.New(cfg.Runtime.MaxConcurrentModelCalls)
 
 	sdkLog := log.New(&redactingWriter{target: a.logOutput, redactor: redactor}, "slack: ", log.LstdFlags)
+	var grantedSlackScopes string
 	api := slackapi.New(
 		botToken,
 		slackapi.OptionAppLevelToken(appToken),
 		slackapi.OptionLog(sdkLog),
+		slackapi.OptionOnResponseHeaders(func(path string, headers http.Header) {
+			if path == "auth.test" {
+				grantedSlackScopes = headers.Get("X-OAuth-Scopes")
+			}
+		}),
 	)
 	authCtx, cancelAuth := optionalTimeout(ctx, time.Duration(cfg.Runtime.SlackAPITimeoutSeconds)*time.Second)
 	auth, err := api.AuthTestContext(authCtx)
@@ -275,6 +283,9 @@ func (a *Application) Run(ctx context.Context) error {
 	}
 	if auth == nil || auth.UserID == "" {
 		return errors.New("authenticate Slack bot: Slack returned no bot user ID")
+	}
+	if cfg.Canvases.Enabled && !hasSlackScope(grantedSlackScopes, "canvases:write") {
+		return errors.New("initialize Canvas support: Slack bot token is missing canvases:write; regenerate the manifest and reinstall the app")
 	}
 
 	slackTimeout := time.Duration(cfg.Runtime.SlackAPITimeoutSeconds) * time.Second
@@ -342,7 +353,25 @@ func (a *Application) Run(ctx context.Context) error {
 				return redactor.Error(fmt.Errorf("initialize sandbox service: %w", err))
 			}
 		}
-		toolFactory = toolfactory.New(store, sandboxService)
+		var canvasService *canvasusecase.Service
+		if cfg.Canvases.Enabled {
+			canvasCreator := slackadapter.NewCanvasCreator(api, time.Duration(cfg.Canvases.TimeoutSeconds)*time.Second)
+			canvasStore := adaptersqlite.NewCanvasOperationStore(store)
+			canvasService, err = canvasusecase.New(canvasusecase.Config{
+				MaxTitleChars:   cfg.Canvases.MaxTitleChars,
+				MaxContentChars: cfg.Canvases.MaxContentChars,
+				MaxContentBytes: cfg.Canvases.MaxContentBytes,
+			}, canvasusecase.Dependencies{
+				Creator:         canvasCreator,
+				Store:           canvasStore,
+				Logger:          logger,
+				SanitizeContent: redactor.String,
+			})
+			if err != nil {
+				return redactor.Error(fmt.Errorf("initialize canvas service: %w", err))
+			}
+		}
+		toolFactory = toolfactory.New(store, sandboxService, canvasService)
 		if len(preparedAgentTools) > 0 || len(preparedWorkflows) > 0 {
 			globalInstruction := ""
 			if rootDef != nil {

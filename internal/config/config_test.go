@@ -76,6 +76,7 @@ func TestDefaultMatchesPRD(t *testing.T) {
 			MaxPatchOps:           10,
 		},
 		Sandbox:  config.SandboxConfig{Projects: map[string]string{}, CommandTimeoutSeconds: 30, MaxOutputBytes: 65536},
+		Canvases: config.CanvasesConfig{MaxTitleChars: 150, MaxContentChars: 50000, MaxContentBytes: 5 * 1024 * 1024, TimeoutSeconds: 30},
 		OpenCode: config.OpenCodeConfig{Management: config.OpenCodeManagementConfig{AllowedUserIDs: []string{}}},
 	}
 
@@ -169,6 +170,12 @@ sandbox:
   projects: {}
   command_timeout_seconds: 30
   max_output_bytes: 65536
+canvases:
+  enabled: false
+  max_title_chars: 150
+  max_content_chars: 50000
+  max_content_bytes: 5242880
+  timeout_seconds: 30
 opencode:
   management:
     allowed_user_ids: []
@@ -559,6 +566,22 @@ func TestParseSandboxDisabledByDefault(t *testing.T) {
 	}
 	if len(cfg.Sandbox.Projects) != 0 {
 		t.Fatalf("sandbox projects should be empty by default")
+	}
+}
+
+func TestParseAppliesCanvasConfig(t *testing.T) {
+	cfg, err := config.Parse([]byte(`canvases:
+  enabled: true
+  max_title_chars: 100
+  max_content_chars: 2000
+  max_content_bytes: 4096
+  timeout_seconds: 12
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Canvases.Enabled || cfg.Canvases.MaxTitleChars != 100 || cfg.Canvases.MaxContentChars != 2000 || cfg.Canvases.MaxContentBytes != 4096 || cfg.Canvases.TimeoutSeconds != 12 {
+		t.Fatalf("parsed canvases config = %#v", cfg.Canvases)
 	}
 }
 

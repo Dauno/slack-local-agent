@@ -4,7 +4,10 @@
 package toolfactory
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"google.golang.org/adk/v2/agent"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/Dauno/slack-local-agent/internal/domain"
 	"github.com/Dauno/slack-local-agent/internal/port"
+	canvasusecase "github.com/Dauno/slack-local-agent/internal/usecase/canvas"
 	sandboxusecase "github.com/Dauno/slack-local-agent/internal/usecase/sandbox"
 )
 
@@ -23,15 +27,16 @@ var _ port.AgentToolFactory = (*Factory)(nil)
 type Factory struct {
 	store   port.ConversationStore
 	sandbox *sandboxusecase.Service
+	canvas  *canvasusecase.Service
 }
 
-// New creates a tool factory. The sandbox service may be nil — when absent,
-// only the conversation list_messages tool is registered.
-func New(store port.ConversationStore, sb *sandboxusecase.Service) *Factory {
+// New creates a tool factory. Sandbox and canvas services may be nil — when
+// absent, only the conversation list_messages tool is registered.
+func New(store port.ConversationStore, sb *sandboxusecase.Service, cv *canvasusecase.Service) *Factory {
 	if store == nil {
 		return nil
 	}
-	return &Factory{store: store, sandbox: sb}
+	return &Factory{store: store, sandbox: sb, canvas: cv}
 }
 
 // ToolsForInvocation implements port.AgentToolFactory. A tool construction
@@ -50,34 +55,40 @@ func (f *Factory) ToolsForInvocation(actor string, key domain.ConversationKey) (
 	}
 	tools = append(tools, ro)
 
-	if f.sandbox == nil {
-		return tools, nil
+	if f.sandbox != nil {
+		// Read-only sandbox tools.
+		listRepos, err := f.listReposTool(actor)
+		if err != nil {
+			return nil, fmt.Errorf("build list_repos tool: %w", err)
+		}
+		tools = append(tools, listRepos)
+
+		listDirectory, err := f.listDirectoryTool(actor)
+		if err != nil {
+			return nil, fmt.Errorf("build list_directory tool: %w", err)
+		}
+		tools = append(tools, listDirectory)
+
+		readFile, err := f.readFileTool(actor)
+		if err != nil {
+			return nil, fmt.Errorf("build read_file tool: %w", err)
+		}
+		tools = append(tools, readFile)
+
+		listWorktrees, err := f.listWorktreesTool(actor)
+		if err != nil {
+			return nil, fmt.Errorf("build list_worktrees tool: %w", err)
+		}
+		tools = append(tools, listWorktrees)
 	}
 
-	// Read-only sandbox tools.
-	listRepos, err := f.listReposTool(actor)
-	if err != nil {
-		return nil, fmt.Errorf("build list_repos tool: %w", err)
+	if f.canvas != nil {
+		createCanvas, err := f.createCanvasTool(actor, key)
+		if err != nil {
+			return nil, fmt.Errorf("build create_canvas tool: %w", err)
+		}
+		tools = append(tools, createCanvas)
 	}
-	tools = append(tools, listRepos)
-
-	listDirectory, err := f.listDirectoryTool(actor)
-	if err != nil {
-		return nil, fmt.Errorf("build list_directory tool: %w", err)
-	}
-	tools = append(tools, listDirectory)
-
-	readFile, err := f.readFileTool(actor)
-	if err != nil {
-		return nil, fmt.Errorf("build read_file tool: %w", err)
-	}
-	tools = append(tools, readFile)
-
-	listWorktrees, err := f.listWorktreesTool(actor)
-	if err != nil {
-		return nil, fmt.Errorf("build list_worktrees tool: %w", err)
-	}
-	tools = append(tools, listWorktrees)
 
 	return tools, nil
 }
@@ -328,4 +339,49 @@ func splitLines(s string) []string {
 		lines = append(lines, s[start:])
 	}
 	return lines
+}
+
+type createCanvasArgs struct {
+	Title   string `json:"title" jsonschema:"Canvas title (required, max 150 characters)"`
+	Content string `json:"content" jsonschema:"Canvas body in standard Markdown (required, max 50,000 characters)"`
+}
+
+type createCanvasResult struct {
+	CanvasID string `json:"canvas_id"`
+	Message  string `json:"message"`
+}
+
+func (f *Factory) createCanvasTool(actor string, key domain.ConversationKey) (tool.Tool, error) {
+	svc := f.canvas
+
+	return functiontool.New(functiontool.Config{
+		Name:        "create_canvas",
+		Description: "Creates a persistent Slack Canvas document with the given title and Markdown content. Requires explicit user confirmation before creation.",
+		RequireConfirmationProvider: func(args createCanvasArgs) bool {
+			return svc.ValidateCanvas(args.Title, args.Content) == nil
+		},
+	}, func(ctx agent.Context, args createCanvasArgs) (createCanvasResult, error) {
+		callID := ctx.FunctionCallID()
+		if callID == "" {
+			return createCanvasResult{}, fmt.Errorf("create canvas: function call ID is required")
+		}
+		operationDigest := sha256.Sum256([]byte(string(key) + "\x00" + callID))
+		callID = fmt.Sprintf("canvas:%x", operationDigest)
+		result, err := svc.CreateCanvas(ctx, callID, key, actor, args.Title, args.Content)
+		if err != nil {
+			return createCanvasResult{Message: fmt.Sprintf("Failed to create Canvas: %v", err)}, err
+		}
+		return createCanvasResult{
+			CanvasID: result.CanvasID,
+			Message:  fmt.Sprintf("Canvas created: %s", canvasURL(key, result.CanvasID)),
+		}, nil
+	})
+}
+
+func canvasURL(key domain.ConversationKey, canvasID string) string {
+	parts := strings.SplitN(string(key), ":", 4)
+	if len(parts) >= 2 && parts[0] == "slack" {
+		return fmt.Sprintf("https://app.slack.com/docs/%s/%s", url.PathEscape(parts[1]), url.PathEscape(canvasID))
+	}
+	return canvasID
 }
