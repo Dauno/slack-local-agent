@@ -17,6 +17,7 @@ import (
 	"github.com/Dauno/slack-local-agent/internal/domain"
 	"github.com/Dauno/slack-local-agent/internal/port"
 	canvasusecase "github.com/Dauno/slack-local-agent/internal/usecase/canvas"
+	generatedfileusecase "github.com/Dauno/slack-local-agent/internal/usecase/generatedfile"
 	sandboxusecase "github.com/Dauno/slack-local-agent/internal/usecase/sandbox"
 )
 
@@ -28,15 +29,16 @@ type Factory struct {
 	store   port.ConversationStore
 	sandbox *sandboxusecase.Service
 	canvas  *canvasusecase.Service
+	exports *generatedfileusecase.Service
 }
 
-// New creates a tool factory. Sandbox and canvas services may be nil — when
+// New creates a tool factory. Sandbox, canvas, and export services may be nil — when
 // absent, only the conversation list_messages tool is registered.
-func New(store port.ConversationStore, sb *sandboxusecase.Service, cv *canvasusecase.Service) *Factory {
+func New(store port.ConversationStore, sb *sandboxusecase.Service, cv *canvasusecase.Service, exports *generatedfileusecase.Service) *Factory {
 	if store == nil {
 		return nil
 	}
-	return &Factory{store: store, sandbox: sb, canvas: cv}
+	return &Factory{store: store, sandbox: sb, canvas: cv, exports: exports}
 }
 
 // ToolsForInvocation implements port.AgentToolFactory. A tool construction
@@ -46,7 +48,7 @@ func (f *Factory) ToolsForInvocation(actor string, key domain.ConversationKey) (
 		return nil, nil
 	}
 
-	tools := make([]any, 0, 8)
+	tools := make([]any, 0, 12)
 
 	// Conversation tool.
 	ro, err := f.listMessagesTool(key)
@@ -88,6 +90,13 @@ func (f *Factory) ToolsForInvocation(actor string, key domain.ConversationKey) (
 			return nil, fmt.Errorf("build create_canvas tool: %w", err)
 		}
 		tools = append(tools, createCanvas)
+	}
+	if f.exports != nil {
+		exportTools, err := f.generatedFileTools(actor, key)
+		if err != nil {
+			return nil, fmt.Errorf("build generated file export tools: %w", err)
+		}
+		tools = append(tools, exportTools...)
 	}
 
 	return tools, nil
@@ -384,4 +393,98 @@ func canvasURL(key domain.ConversationKey, canvasID string) string {
 		return fmt.Sprintf("https://app.slack.com/docs/%s/%s", url.PathEscape(parts[1]), url.PathEscape(canvasID))
 	}
 	return canvasID
+}
+
+type exportTextArgs struct {
+	Filename string `json:"filename" jsonschema:"UTF-8 basename ending in .txt"`
+	Content  string `json:"content" jsonschema:"text content to export"`
+}
+
+type exportMarkdownArgs struct {
+	Filename string `json:"filename" jsonschema:"UTF-8 basename ending in .md"`
+	Content  string `json:"content" jsonschema:"Markdown content to export"`
+}
+
+type exportCSVArgs struct {
+	Filename string     `json:"filename" jsonschema:"UTF-8 basename ending in .csv"`
+	Headers  []string   `json:"headers" jsonschema:"CSV column headers"`
+	Rows     [][]string `json:"rows" jsonschema:"CSV rows; each row must match the header count"`
+}
+
+type exportJSONArgs struct {
+	Filename string `json:"filename" jsonschema:"UTF-8 basename ending in .json"`
+	Content  string `json:"content" jsonschema:"valid JSON content to export"`
+}
+
+type exportFileResult struct {
+	FileID   string `json:"file_id"`
+	Filename string `json:"filename"`
+	Message  string `json:"message"`
+}
+
+func (f *Factory) generatedFileTools(actor string, key domain.ConversationKey) ([]any, error) {
+	svc := f.exports
+	textTool, err := functiontool.New(functiontool.Config{
+		Name: "export_text", Description: "Uploads generated UTF-8 text to the current Slack conversation. Requires explicit user confirmation.",
+		RequireConfirmationProvider: func(args exportTextArgs) bool {
+			return svc.Validate(args.Filename, domain.GeneratedFileText, []byte(args.Content)) == nil
+		},
+	}, func(ctx agent.Context, args exportTextArgs) (exportFileResult, error) {
+		return executeExport(ctx, svc, actor, key, args.Filename, domain.GeneratedFileText, []byte(args.Content))
+	})
+	if err != nil {
+		return nil, err
+	}
+	markdownTool, err := functiontool.New(functiontool.Config{
+		Name: "export_markdown", Description: "Uploads generated Markdown to the current Slack conversation. Requires explicit user confirmation.",
+		RequireConfirmationProvider: func(args exportMarkdownArgs) bool {
+			return svc.Validate(args.Filename, domain.GeneratedFileMarkdown, []byte(args.Content)) == nil
+		},
+	}, func(ctx agent.Context, args exportMarkdownArgs) (exportFileResult, error) {
+		return executeExport(ctx, svc, actor, key, args.Filename, domain.GeneratedFileMarkdown, []byte(args.Content))
+	})
+	if err != nil {
+		return nil, err
+	}
+	csvTool, err := functiontool.New(functiontool.Config{
+		Name: "export_csv", Description: "Serializes typed headers and rows as CSV, then uploads it to the current Slack conversation. Requires explicit user confirmation.",
+		RequireConfirmationProvider: func(args exportCSVArgs) bool {
+			content, err := generatedfileusecase.SerializeCSV(args.Headers, args.Rows)
+			return err == nil && svc.Validate(args.Filename, domain.GeneratedFileCSV, content) == nil
+		},
+	}, func(ctx agent.Context, args exportCSVArgs) (exportFileResult, error) {
+		content, err := generatedfileusecase.SerializeCSV(args.Headers, args.Rows)
+		if err != nil {
+			return exportFileResult{}, err
+		}
+		return executeExport(ctx, svc, actor, key, args.Filename, domain.GeneratedFileCSV, content)
+	})
+	if err != nil {
+		return nil, err
+	}
+	jsonTool, err := functiontool.New(functiontool.Config{
+		Name: "export_json", Description: "Validates and deterministically re-encodes JSON before uploading it to the current Slack conversation. Requires explicit user confirmation.",
+		RequireConfirmationProvider: func(args exportJSONArgs) bool {
+			return svc.Validate(args.Filename, domain.GeneratedFileJSON, []byte(args.Content)) == nil
+		},
+	}, func(ctx agent.Context, args exportJSONArgs) (exportFileResult, error) {
+		return executeExport(ctx, svc, actor, key, args.Filename, domain.GeneratedFileJSON, []byte(args.Content))
+	})
+	if err != nil {
+		return nil, err
+	}
+	return []any{textTool, markdownTool, csvTool, jsonTool}, nil
+}
+
+func executeExport(ctx agent.Context, svc *generatedfileusecase.Service, actor string, key domain.ConversationKey, filename string, format domain.GeneratedFileFormat, content []byte) (exportFileResult, error) {
+	callID := ctx.FunctionCallID()
+	if callID == "" {
+		return exportFileResult{}, fmt.Errorf("export generated file: function call ID is required")
+	}
+	digest := sha256.Sum256([]byte(string(key) + "\x00" + callID))
+	result, err := svc.Export(ctx, generatedfileusecase.ExportRequest{OperationID: fmt.Sprintf("file:%x", digest), ConversationKey: key, Actor: actor, Filename: filename, Format: format, Content: content})
+	if err != nil {
+		return exportFileResult{Message: fmt.Sprintf("Failed to export file: %v", err)}, err
+	}
+	return exportFileResult{FileID: result.SlackFileID, Filename: result.Filename, Message: fmt.Sprintf("File uploaded to this conversation: %s", result.Filename)}, nil
 }

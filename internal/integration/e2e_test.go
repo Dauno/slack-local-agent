@@ -374,7 +374,7 @@ func TestE2E_ContextSurvivesRestart(t *testing.T) {
 	}
 
 	adkSession := adaptersqlite.NewAdkSessionService(store)
-	toolFact := toolfactory.New(store, nil, nil)
+	toolFact := toolfactory.New(store, nil, nil, nil)
 
 	runtime, err := adkagent.NewRuntime(adkagent.RuntimeConfig{
 		AgentName:      "Dev Agent",
@@ -434,7 +434,7 @@ func TestE2E_ContextSurvivesRestart(t *testing.T) {
 	}
 
 	adkSession2 := adaptersqlite.NewAdkSessionService(reopened)
-	toolFact2 := toolfactory.New(reopened, nil, nil)
+	toolFact2 := toolfactory.New(reopened, nil, nil, nil)
 
 	runtime2, err := adkagent.NewRuntime(adkagent.RuntimeConfig{
 		AgentName:      "Dev Agent",

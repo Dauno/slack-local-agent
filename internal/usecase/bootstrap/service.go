@@ -134,7 +134,7 @@ func (s *Service) EnsureBaseArtifacts(ctx context.Context, projectRoot string) (
 	}
 
 	renderedManifest, err := manifest.Render(manifest.Identity{
-		AppName: cfg.Slack.AppName, BotDisplayName: cfg.Slack.BotDisplayName, CanvasesEnabled: cfg.Canvases.Enabled,
+		AppName: cfg.Slack.AppName, BotDisplayName: cfg.Slack.BotDisplayName, CanvasesEnabled: cfg.Canvases.Enabled, ExportsEnabled: cfg.Exports.Enabled,
 	})
 	if err != nil {
 		return Snapshot{}, err
@@ -329,7 +329,7 @@ func (s *Service) ApplyConfirmedUpdates(
 		return Snapshot{}, fmt.Errorf("render confirmed configuration: %w", err)
 	}
 	manifestContent, err := manifest.Render(manifest.Identity{
-		AppName: cfg.Slack.AppName, BotDisplayName: cfg.Slack.BotDisplayName, CanvasesEnabled: cfg.Canvases.Enabled,
+		AppName: cfg.Slack.AppName, BotDisplayName: cfg.Slack.BotDisplayName, CanvasesEnabled: cfg.Canvases.Enabled, ExportsEnabled: cfg.Exports.Enabled,
 	})
 	if err != nil {
 		return Snapshot{}, err

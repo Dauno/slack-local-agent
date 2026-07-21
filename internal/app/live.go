@@ -63,6 +63,14 @@ func (liveChecker) CheckSlackContext(ctx context.Context, botToken string) error
 }
 
 func (liveChecker) CheckSlackCanvas(ctx context.Context, botToken string) error {
+	return checkSlackBotScope(ctx, botToken, "canvases:write", "Canvas")
+}
+
+func (liveChecker) CheckSlackExports(ctx context.Context, botToken string) error {
+	return checkSlackBotScope(ctx, botToken, "files:write", "generated file")
+}
+
+func checkSlackBotScope(ctx context.Context, botToken, requiredScope, subject string) error {
 	var grantedScopes string
 	api := slackapi.New(botToken, slackapi.OptionOnResponseHeaders(func(path string, headers http.Header) {
 		if path == "auth.test" {
@@ -70,12 +78,12 @@ func (liveChecker) CheckSlackCanvas(ctx context.Context, botToken string) error 
 		}
 	}))
 	if _, err := api.AuthTestContext(ctx); err != nil {
-		return fmt.Errorf("Slack auth.test for Canvas check failed: %w", err)
+		return fmt.Errorf("Slack auth.test for %s check failed: %w", subject, err)
 	}
-	if hasSlackScope(grantedScopes, "canvases:write") {
+	if hasSlackScope(grantedScopes, requiredScope) {
 		return nil
 	}
-	return errors.New("Slack bot token is missing canvases:write")
+	return fmt.Errorf("Slack bot token is missing %s", requiredScope)
 }
 
 func hasSlackScope(grantedScopes, required string) bool {

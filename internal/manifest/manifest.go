@@ -29,6 +29,7 @@ type Identity struct {
 	AppName         string
 	BotDisplayName  string
 	CanvasesEnabled bool
+	ExportsEnabled  bool
 }
 
 // Render returns a deterministic Slack manifest for the supplied identity.

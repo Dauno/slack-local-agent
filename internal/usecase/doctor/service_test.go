@@ -36,8 +36,8 @@ type failingDatabase struct{ err error }
 func (d failingDatabase) CheckDatabase(context.Context, string) error { return d.err }
 
 type fakeLive struct {
-	bot, app, context, canvas, model int
-	modelAPIKey                      string
+	bot, app, context, canvas, exports, model int
+	modelAPIKey                               string
 }
 
 type fakeCLI struct {
@@ -75,6 +75,7 @@ func (f *fakeLive) CheckSlackBot(context.Context, string) error         { f.bot+
 func (f *fakeLive) CheckSlackApp(context.Context, string, string) error { f.app++; return nil }
 func (f *fakeLive) CheckSlackContext(context.Context, string) error     { f.context++; return nil }
 func (f *fakeLive) CheckSlackCanvas(context.Context, string) error      { f.canvas++; return nil }
+func (f *fakeLive) CheckSlackExports(context.Context, string) error     { f.exports++; return nil }
 func (f *fakeLive) CheckModel(context.Context, config.ModelConfig, string) error {
 	f.model++
 	return nil
@@ -149,6 +150,20 @@ func TestLiveDoctorChecksCanvasCapabilityWhenEnabled(t *testing.T) {
 	service, _ := New(deps)
 	report := service.Run(t.Context(), true)
 	if report.ExitCode() != 0 || live.canvas != 1 {
+		t.Fatalf("report=%#v live=%#v", report, live)
+	}
+}
+
+func TestLiveDoctorChecksGeneratedFileCapabilityWhenEnabled(t *testing.T) {
+	deps, _, live := validDependencies()
+	deps.LoadConfig = func(string) (config.Config, error) {
+		cfg := config.Default()
+		cfg.Exports.Enabled = true
+		return cfg, nil
+	}
+	service, _ := New(deps)
+	report := service.Run(t.Context(), true)
+	if report.ExitCode() != 0 || live.exports != 1 {
 		t.Fatalf("report=%#v live=%#v", report, live)
 	}
 }

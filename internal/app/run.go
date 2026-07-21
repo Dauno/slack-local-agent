@@ -37,6 +37,7 @@ import (
 	"github.com/Dauno/slack-local-agent/internal/usecase/bootstrap"
 	botusecase "github.com/Dauno/slack-local-agent/internal/usecase/bot"
 	canvasusecase "github.com/Dauno/slack-local-agent/internal/usecase/canvas"
+	generatedfileusecase "github.com/Dauno/slack-local-agent/internal/usecase/generatedfile"
 	memoryusecase "github.com/Dauno/slack-local-agent/internal/usecase/memory"
 	opencodeusecase "github.com/Dauno/slack-local-agent/internal/usecase/opencode"
 	sandboxusecase "github.com/Dauno/slack-local-agent/internal/usecase/sandbox"
@@ -287,6 +288,9 @@ func (a *Application) Run(ctx context.Context) error {
 	if cfg.Canvases.Enabled && !hasSlackScope(grantedSlackScopes, "canvases:write") {
 		return errors.New("initialize Canvas support: Slack bot token is missing canvases:write; regenerate the manifest and reinstall the app")
 	}
+	if cfg.Exports.Enabled && !hasSlackScope(grantedSlackScopes, "files:write") {
+		return errors.New("initialize generated file exports: Slack bot token is missing files:write; regenerate the manifest and reinstall the app")
+	}
 
 	slackTimeout := time.Duration(cfg.Runtime.SlackAPITimeoutSeconds) * time.Second
 	publisher := slackadapter.NewPublisher(api, slackTimeout, logger, cfg.Slack.PartLabels)
@@ -371,7 +375,19 @@ func (a *Application) Run(ctx context.Context) error {
 				return redactor.Error(fmt.Errorf("initialize canvas service: %w", err))
 			}
 		}
-		toolFactory = toolfactory.New(store, sandboxService, canvasService)
+		var generatedFileService *generatedfileusecase.Service
+		if cfg.Exports.Enabled {
+			uploader := slackadapter.NewGeneratedFileUploader(api, time.Duration(cfg.Exports.TimeoutSeconds)*time.Second)
+			generatedFileService, err = generatedfileusecase.New(generatedfileusecase.Config{
+				MaxFilenameChars: cfg.Exports.MaxFilenameChars, MaxContentBytes: cfg.Exports.MaxContentBytes,
+			}, generatedfileusecase.Dependencies{
+				Uploader: uploader, Store: adaptersqlite.NewGeneratedFileOperationStore(store), Logger: logger, SanitizeContent: redactor.String,
+			})
+			if err != nil {
+				return redactor.Error(fmt.Errorf("initialize generated file export service: %w", err))
+			}
+		}
+		toolFactory = toolfactory.New(store, sandboxService, canvasService, generatedFileService)
 		if len(preparedAgentTools) > 0 || len(preparedWorkflows) > 0 {
 			globalInstruction := ""
 			if rootDef != nil {

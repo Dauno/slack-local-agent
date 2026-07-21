@@ -15,6 +15,9 @@ oauth_config:
 {{- if .CanvasesEnabled }}
       - canvases:write
 {{- end }}
+{{- if .ExportsEnabled }}
+      - files:write
+{{- end }}
       - files:read
       - groups:history
       - groups:read

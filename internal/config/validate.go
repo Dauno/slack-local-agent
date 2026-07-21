@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/Dauno/slack-local-agent/internal/domain"
 )
 
 var (
@@ -231,6 +233,21 @@ func Validate(cfg Config) error {
 		}
 		if cfg.Canvases.TimeoutSeconds <= 0 {
 			add("canvases.timeout_seconds", "must be greater than zero when enabled")
+		}
+	}
+	if cfg.Exports.Enabled {
+		if cfg.Exports.MaxFilenameChars <= 0 {
+			add("exports.max_filename_chars", "must be greater than zero when enabled")
+		} else if cfg.Exports.MaxFilenameChars > domain.MaxGeneratedFilenameRunes {
+			add("exports.max_filename_chars", fmt.Sprintf("must not exceed %d", domain.MaxGeneratedFilenameRunes))
+		}
+		if cfg.Exports.MaxContentBytes <= 0 {
+			add("exports.max_content_bytes", "must be greater than zero when enabled")
+		} else if cfg.Exports.MaxContentBytes > domain.MaxGeneratedFileBytes {
+			add("exports.max_content_bytes", fmt.Sprintf("must not exceed %d", domain.MaxGeneratedFileBytes))
+		}
+		if cfg.Exports.TimeoutSeconds <= 0 {
+			add("exports.timeout_seconds", "must be greater than zero when enabled")
 		}
 	}
 

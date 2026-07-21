@@ -207,9 +207,31 @@ channel canvas on free workspaces, so this standalone-only release is not
 available there. Canvas creation always requires durable user confirmation;
 ambiguous API results are recorded and never retried automatically.
 
+### Generated file exports
+
+Outbound text, Markdown, CSV, and JSON uploads are disabled by default. Enable
+them only when users need files rather than messages or Canvas reports:
+
+```yaml
+exports:
+  enabled: true
+  max_filename_chars: 128
+  max_content_bytes: 1048576
+  timeout_seconds: 30
+```
+
+Run `local-agent manifest --write`, apply the manifest, reinstall the app, and
+run `local-agent doctor --live` to verify `files:write`. The confirmed
+`export_text`, `export_markdown`, `export_csv`, and `export_json` tools upload
+only typed content generated for the current conversation. They never read a
+local path. File content and Slack upload URLs are never stored; operation
+records retain only filename, MIME type, size, digest, state, and Slack file ID.
+An interrupted upload is not retried automatically, preventing known duplicate
+uploads.
+
 Back up `.local-agent/local-agent.db` before upgrading if rollback matters. The
-Canvas operation migration raises the schema version, so older binaries reject
-the upgraded database; restore the backup or use the explicit destructive
+Canvas and generated-file operation migrations raise the schema version, so
+older binaries reject the upgraded database; restore the backup or use the explicit destructive
 `init --reset-state` path when rolling back.
 
 ## Privacy

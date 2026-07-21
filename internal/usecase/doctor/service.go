@@ -46,6 +46,7 @@ type LiveChecker interface {
 	CheckSlackApp(ctx context.Context, botToken, appToken string) error
 	CheckSlackContext(ctx context.Context, botToken string) error
 	CheckSlackCanvas(ctx context.Context, botToken string) error
+	CheckSlackExports(ctx context.Context, botToken string) error
 	CheckModel(ctx context.Context, model config.ModelConfig, apiKey string) error
 	CheckResolvedModel(ctx context.Context, resolved *agentdef.ResolvedModel, apiKey string) error
 }
@@ -449,6 +450,16 @@ func (s *Service) Run(ctx context.Context, includeLive bool) Report {
 			report.fail("Slack Canvas", redactor.String(err.Error()), "Regenerate the manifest, reinstall the Slack app with canvases:write, and verify Canvas availability for the workspace.", false)
 		} else {
 			report.pass("Slack Canvas", "canvases:write scope check passed")
+		}
+	}
+	if cfg.Exports.Enabled && validSecrets[SlackBotTokenKey] {
+		liveCtx, cancel := checkTimeout(ctx, cfg.Exports.TimeoutSeconds)
+		err := s.deps.Live.CheckSlackExports(liveCtx, values[SlackBotTokenKey])
+		cancel()
+		if err != nil {
+			report.fail("Slack generated files", redactor.String(err.Error()), "Regenerate the manifest, reinstall the Slack app with files:write, and verify the bot token.", false)
+		} else {
+			report.pass("Slack generated files", "files:write scope check passed")
 		}
 	}
 	if s.deps.CLI != nil {

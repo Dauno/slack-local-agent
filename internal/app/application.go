@@ -119,7 +119,7 @@ func (a *Application) Manifest(ctx context.Context, write bool) (string, string,
 		return "", "", err
 	}
 	rendered, err := manifest.Render(manifest.Identity{
-		AppName: cfg.Slack.AppName, BotDisplayName: cfg.Slack.BotDisplayName, CanvasesEnabled: cfg.Canvases.Enabled,
+		AppName: cfg.Slack.AppName, BotDisplayName: cfg.Slack.BotDisplayName, CanvasesEnabled: cfg.Canvases.Enabled, ExportsEnabled: cfg.Exports.Enabled,
 	})
 	if err != nil {
 		return "", "", err

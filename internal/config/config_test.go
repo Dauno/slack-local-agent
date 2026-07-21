@@ -77,6 +77,7 @@ func TestDefaultMatchesPRD(t *testing.T) {
 		},
 		Sandbox:  config.SandboxConfig{Projects: map[string]string{}, CommandTimeoutSeconds: 30, MaxOutputBytes: 65536},
 		Canvases: config.CanvasesConfig{MaxTitleChars: 150, MaxContentChars: 50000, MaxContentBytes: 5 * 1024 * 1024, TimeoutSeconds: 30},
+		Exports:  config.ExportsConfig{MaxFilenameChars: 128, MaxContentBytes: 1024 * 1024, TimeoutSeconds: 30},
 		OpenCode: config.OpenCodeConfig{Management: config.OpenCodeManagementConfig{AllowedUserIDs: []string{}}},
 	}
 
@@ -175,6 +176,11 @@ canvases:
   max_title_chars: 150
   max_content_chars: 50000
   max_content_bytes: 5242880
+  timeout_seconds: 30
+exports:
+  enabled: false
+  max_filename_chars: 128
+  max_content_bytes: 1048576
   timeout_seconds: 30
 opencode:
   management:
@@ -582,6 +588,32 @@ func TestParseAppliesCanvasConfig(t *testing.T) {
 	}
 	if !cfg.Canvases.Enabled || cfg.Canvases.MaxTitleChars != 100 || cfg.Canvases.MaxContentChars != 2000 || cfg.Canvases.MaxContentBytes != 4096 || cfg.Canvases.TimeoutSeconds != 12 {
 		t.Fatalf("parsed canvases config = %#v", cfg.Canvases)
+	}
+}
+
+func TestParseAndValidateExportConfig(t *testing.T) {
+	cfg, err := config.Parse([]byte(`exports:
+  enabled: true
+  max_filename_chars: 80
+  max_content_bytes: 65536
+  timeout_seconds: 12
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Exports.Enabled || cfg.Exports.MaxFilenameChars != 80 || cfg.Exports.MaxContentBytes != 65536 || cfg.Exports.TimeoutSeconds != 12 {
+		t.Fatalf("parsed exports config = %#v", cfg.Exports)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	cfg.Exports.MaxFilenameChars = 129
+	cfg.Exports.MaxContentBytes = 1024*1024 + 1
+	err = cfg.Validate()
+	var validation *config.ValidationError
+	if !errors.As(err, &validation) || !validation.Has("exports.max_filename_chars") || !validation.Has("exports.max_content_bytes") {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }
 

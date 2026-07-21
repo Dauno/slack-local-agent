@@ -115,7 +115,7 @@ type runnableFunctionTool interface {
 
 func TestFactoryWithoutSandboxExposesOnlyConversationTools(t *testing.T) {
 	store := &stubConversationStore{}
-	f := toolfactory.New(store, nil, nil)
+	f := toolfactory.New(store, nil, nil, nil)
 	if f == nil {
 		t.Fatal("factory should not be nil")
 	}
@@ -145,7 +145,7 @@ func TestFactoryWithSandboxExposesAllReadOnlyTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := toolfactory.New(store, sb, nil)
+	f := toolfactory.New(store, sb, nil, nil)
 	if f == nil {
 		t.Fatal("factory should not be nil")
 	}
@@ -236,7 +236,7 @@ func TestFactoryExposesCanvasWithoutSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := toolfactory.New(&stubConversationStore{}, nil, svc)
+	f := toolfactory.New(&stubConversationStore{}, nil, svc, nil)
 	tools, err := f.ToolsForInvocation("U12345678", "slack:T12345678:dm:D12345678")
 	if err != nil {
 		t.Fatal(err)
@@ -250,7 +250,7 @@ func TestFactoryExposesCanvasWithoutSandbox(t *testing.T) {
 }
 
 func TestFactoryNilStoreReturnsNil(t *testing.T) {
-	f := toolfactory.New(nil, nil, nil)
+	f := toolfactory.New(nil, nil, nil, nil)
 	if f != nil {
 		t.Fatal("factory with nil store should be nil")
 	}

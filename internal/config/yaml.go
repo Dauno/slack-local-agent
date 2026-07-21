@@ -99,6 +99,12 @@ var configSchema = []schemaField{
 		{name: "max_content_bytes"},
 		{name: "timeout_seconds"},
 	}},
+	{name: "exports", children: []schemaField{
+		{name: "enabled"},
+		{name: "max_filename_chars"},
+		{name: "max_content_bytes"},
+		{name: "timeout_seconds"},
+	}},
 	{name: "opencode", children: []schemaField{
 		{name: "management", children: []schemaField{
 			{name: "allowed_user_ids"},

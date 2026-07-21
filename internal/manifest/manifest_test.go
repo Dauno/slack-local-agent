@@ -12,7 +12,7 @@ import (
 func TestRenderIncludesIdentitySocketModeScopesAndEvents(t *testing.T) {
 	t.Parallel()
 
-	identity := Identity{AppName: "Local Agent: Dev", BotDisplayName: "Dev #1", CanvasesEnabled: true}
+	identity := Identity{AppName: "Local Agent: Dev", BotDisplayName: "Dev #1", CanvasesEnabled: true, ExportsEnabled: true}
 	got, err := Render(identity)
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
@@ -65,6 +65,7 @@ func TestRenderIncludesIdentitySocketModeScopesAndEvents(t *testing.T) {
 		"channels:read",
 		"chat:write",
 		"canvases:write",
+		"files:write",
 		"files:read",
 		"groups:history",
 		"groups:read",
@@ -134,6 +135,16 @@ func TestRenderOmitsCanvasScopeWhenDisabled(t *testing.T) {
 	}
 	if strings.Contains(rendered, "canvases:write") {
 		t.Fatal("disabled Canvas feature requested canvases:write")
+	}
+}
+
+func TestRenderOmitsGeneratedFileScopeWhenDisabled(t *testing.T) {
+	rendered, err := Render(Identity{AppName: "Local Agent", BotDisplayName: "Dev Agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rendered, "files:write") {
+		t.Fatal("disabled exports requested files:write")
 	}
 }
 

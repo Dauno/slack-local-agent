@@ -378,3 +378,32 @@ type CanvasOperationStore interface {
 }
 
 var ErrCanvasOperationExists = errors.New("canvas operation already exists")
+
+type GeneratedFileUploadTarget struct {
+	FileID    string
+	UploadURL string
+}
+
+type GeneratedFileUploadError struct {
+	Err       error
+	Ambiguous bool
+}
+
+func (e *GeneratedFileUploadError) Error() string { return e.Err.Error() }
+func (e *GeneratedFileUploadError) Unwrap() error { return e.Err }
+
+// GeneratedFileUploader performs Slack's external upload protocol. Upload URLs
+// are transient credentials and must never be persisted by callers.
+type GeneratedFileUploader interface {
+	RequestUploadURL(ctx context.Context, filename string, sizeBytes int) (GeneratedFileUploadTarget, error)
+	UploadBytes(ctx context.Context, target GeneratedFileUploadTarget, content []byte) error
+	CompleteUpload(ctx context.Context, fileID string, channelID string, threadTS string, title string) error
+}
+
+type GeneratedFileOperationStore interface {
+	CreateGeneratedFileOperation(ctx context.Context, op domain.GeneratedFileOperation) error
+	UpdateGeneratedFileOperation(ctx context.Context, operationID string, status domain.GeneratedFileOperationStatus, slackFileID string) error
+	GetGeneratedFileOperation(ctx context.Context, operationID string) (*domain.GeneratedFileOperation, error)
+}
+
+var ErrGeneratedFileOperationExists = errors.New("generated file operation already exists")
