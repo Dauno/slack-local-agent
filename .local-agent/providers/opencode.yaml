@@ -31,3 +31,12 @@ profiles:
       - id: mode
         value: build
     permission_option_kind: allow_once
+  sol-high:
+    config_options:
+      - id: model
+        value: openai/gpt-5.6-sol
+      - id: effort
+        value: high
+      - id: mode
+        value: build
+    permission_option_kind: allow_once

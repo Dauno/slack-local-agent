@@ -642,7 +642,33 @@ func TestHandleStreamingErrorAfterVisibleOutputDoesNotPostReplacement(t *testing
 	if err != nil || outcome != OutcomeModelFailed {
 		t.Fatalf("outcome=%q err=%v", outcome, err)
 	}
-	if standard.createdText == "" || !strings.Contains(standard.interrupted, "Interrupted") || len(regular.calls) != 0 {
+	if standard.createdText == "" || standard.interrupted != service.cfg.ModelErrorMessage || len(regular.calls) != 0 {
+		t.Fatalf("standard=%#v regular=%#v", standard, regular.calls)
+	}
+}
+
+func TestHandleStreamingFinalMismatchReplacesVisiblePartialText(t *testing.T) {
+	stream := &fakeStreamingRuntime{events: []port.AgentStreamEvent{
+		{Kind: port.AgentStreamTextDelta, TextDelta: strings.Repeat("partial ", 30)},
+		{Kind: port.AgentStreamCompleted, Turn: &port.AgentTurn{Text: "different final text"}},
+	}}
+	store := &fakeStore{recent: make(map[domain.ConversationKey][]domain.Message)}
+	standard := &fakeStandardExperience{}
+	regular := &fakePublisher{}
+	service := newTestService(t, store, &fakeRuntime{}, &fakeHistory{}, regular, nil)
+	service.cfg.StreamingEnabled = true
+	service.cfg.StreamingCarryRunes = 128
+	service.streamingRuntime = stream
+	service.standardStore = standard
+	service.incrementalPublisher = standard
+	invocation := botInvocation()
+	invocation.ThreadedDM = true
+
+	outcome, err := service.Handle(t.Context(), invocation)
+	if err != nil || outcome != OutcomeModelFailed {
+		t.Fatalf("outcome=%q err=%v", outcome, err)
+	}
+	if standard.createdText == "" || standard.interrupted != service.cfg.ModelErrorMessage || len(regular.calls) != 0 {
 		t.Fatalf("standard=%#v regular=%#v", standard, regular.calls)
 	}
 }

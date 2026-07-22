@@ -1,7 +1,6 @@
 package acpclient
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,7 +18,6 @@ import (
 )
 
 const (
-	defaultLineLimit    = 100_000
 	stdoutBoundBytes    = 1 * 1024 * 1024
 	stderrBoundBytes    = 128 * 1024
 	processKillGrace    = 5 * time.Second
@@ -29,9 +27,8 @@ const (
 )
 
 type Bounds struct {
-	MaxLineBytes int
-	MaxStdout    int
-	MaxStderr    int
+	MaxStdout int
+	MaxStderr int
 }
 
 type Client struct {
@@ -48,9 +45,8 @@ func New(executable string, args []string) *Client {
 		executable: executable,
 		args:       append([]string(nil), args...),
 		bounds: Bounds{
-			MaxLineBytes: defaultLineLimit,
-			MaxStdout:    stdoutBoundBytes,
-			MaxStderr:    stderrBoundBytes,
+			MaxStdout: stdoutBoundBytes,
+			MaxStderr: stderrBoundBytes,
 		},
 	}
 }
@@ -283,19 +279,23 @@ func (c *Client) start(ctx context.Context, dir string) (*process, error) {
 }
 
 func (c *Client) readStdout(proc *process, stdout io.Reader) {
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 4096), c.bounds.MaxLineBytes)
-	total := 0
-	for scanner.Scan() {
-		line := append([]byte(nil), scanner.Bytes()...)
-		total += len(line) + 1
-		if total > c.bounds.MaxStdout {
-			proc.reportFatal(errors.New("ACP stdout exceeds aggregate limit"))
+	limited := &io.LimitedReader{R: stdout, N: int64(c.bounds.MaxStdout) + 1}
+	decoder := json.NewDecoder(limited)
+	for {
+		var message wireMessage
+		if err := decoder.Decode(&message); err != nil {
+			if limited.N == 0 {
+				proc.reportFatal(errors.New("ACP stdout exceeds aggregate limit"))
+				return
+			}
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			proc.reportFatal(fmt.Errorf("ACP stdout read failed: %w", err))
 			return
 		}
-		var message wireMessage
-		if err := json.Unmarshal(line, &message); err != nil {
-			proc.reportFatal(errors.New("ACP emitted malformed JSON-RPC"))
+		if limited.N == 0 || decoder.InputOffset() > int64(c.bounds.MaxStdout) {
+			proc.reportFatal(errors.New("ACP stdout exceeds aggregate limit"))
 			return
 		}
 		select {
@@ -303,10 +303,6 @@ func (c *Client) readStdout(proc *process, stdout io.Reader) {
 		case <-proc.ctx.Done():
 			return
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		proc.reportFatal(fmt.Errorf("ACP stdout read failed: %w", err))
-		return
 	}
 	proc.reportFatal(errors.New("ACP stdout closed unexpectedly"))
 }

@@ -101,7 +101,7 @@ func (s *Service) handleStreamingTurn(
 			}
 			return OutcomeModelFailed, nil
 		}
-		s.interruptIncremental(ctx, &operation, sanitizer.Snapshot(false), "_Interrupted._")
+		s.interruptIncremental(ctx, &operation, "", s.cfg.ModelErrorMessage)
 		return OutcomeModelFailed, nil
 	}
 	if terminal.Kind == port.AgentStreamPendingConfirmation && terminal.Turn != nil && terminal.Turn.PendingConfirmation != nil {
@@ -124,7 +124,7 @@ func (s *Service) handleStreamingTurn(
 	finalText := sanitizer.Snapshot(true)
 	if strings.TrimSpace(finalText) == "" || finalText != s.sanitize(terminal.Turn.Text) {
 		s.updateProgress(ctx, progress, domain.ProgressFailed)
-		s.interruptIncremental(ctx, &operation, sanitizer.Snapshot(false), "_Interrupted._")
+		s.interruptIncremental(ctx, &operation, "", s.cfg.ModelErrorMessage)
 		return OutcomeModelFailed, nil
 	}
 	s.updateProgress(ctx, progress, domain.ProgressFinalizing)

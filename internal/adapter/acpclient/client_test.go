@@ -63,6 +63,37 @@ func TestACPFakeAgent_RunCollectsOnlyAssistantTextAndHandlesPermission(t *testin
 	}
 }
 
+func TestACPFakeAgent_RunAcceptsLargeJSONRPCMessage(t *testing.T) {
+	script := strings.Replace(fakeACPAgentScript(true, false), `"text":"safe final text"`, `"text":"x" * 150000`, 1)
+	client := acpclient.New("python3", []string{"-c", script})
+	result, err := client.Run(t.Context(), domain.AcpInvocationRequest{
+		PrimaryPath:          t.TempDir(),
+		ConfigOptions:        []domain.ACPConfigOption{{ID: "model", Value: "test-model"}},
+		PermissionOptionKind: domain.ACPPermissionRejectOnce,
+		Task:                 "task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != strings.Repeat("x", 150000) {
+		t.Fatalf("text length = %d, want 150000", len(result.Text))
+	}
+}
+
+func TestACPFakeAgent_RunRejectsOversizedJSONRPCMessage(t *testing.T) {
+	script := strings.Replace(fakeACPAgentScript(true, false), `"text":"safe final text"`, `"text":"x" * 1100000`, 1)
+	client := acpclient.New("python3", []string{"-c", script})
+	_, err := client.Run(t.Context(), domain.AcpInvocationRequest{
+		PrimaryPath:          t.TempDir(),
+		ConfigOptions:        []domain.ACPConfigOption{{ID: "model", Value: "test-model"}},
+		PermissionOptionKind: domain.ACPPermissionRejectOnce,
+		Task:                 "task",
+	})
+	if err == nil || !strings.Contains(err.Error(), "ACP stdout exceeds aggregate limit") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestACPFakeAgent_RejectsAdditionalDirectoriesWithoutCapability(t *testing.T) {
 	client := acpclient.New("python3", []string{"-c", fakeACPAgentScript(false, false)})
 	_, err := client.Run(t.Context(), domain.AcpInvocationRequest{
