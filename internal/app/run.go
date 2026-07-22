@@ -184,6 +184,8 @@ func (a *Application) Run(ctx context.Context) error {
 			curatorLLM = &memoryCuratorLLM{
 				llm:                   curatorModel,
 				generateContentConfig: curatorResolved.GenerateContentConfig,
+				logger:                logger,
+				sanitize:              redactor.String,
 			}
 		}
 		if attachmentDef != nil {
@@ -224,11 +226,6 @@ func (a *Application) Run(ctx context.Context) error {
 		rootModel = legacyModel
 		agentName = cfg.Agent.Name
 		modelBaseURL = cfg.Model.BaseURL
-	}
-
-	if concrete, ok := curatorLLM.(*memoryCuratorLLM); ok {
-		concrete.logger = logger
-		concrete.sanitize = redactor.String
 	}
 
 	if rootModel == nil {
@@ -540,9 +537,16 @@ func (a *Application) Run(ctx context.Context) error {
 		projector := memoryprojector.New()
 		memoryDir := paths.MemoryDir
 
-		go runMemoryCurator(ctx, store, history, curator, memorySvc, projector, memoryDir,
-			time.Duration(cfg.Memory.WorkerIntervalSeconds)*time.Second,
-			cfg.Memory.CuratorMaxRetries, cfg.Memory.RetentionDays, logger)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("memory curator panicked", "panic", r)
+				}
+			}()
+			runMemoryCurator(ctx, store, history, curator, memorySvc, projector, memoryDir,
+				time.Duration(cfg.Memory.WorkerIntervalSeconds)*time.Second,
+				cfg.Memory.CuratorMaxRetries, cfg.Memory.RetentionDays, logger)
+		}()
 
 		service.AddMemory(memorySvc, store)
 		logger.Info("memory service enabled", "directory", memoryDir,
@@ -623,8 +627,8 @@ type redactingWriter struct {
 }
 
 func (w *redactingWriter) Write(data []byte) (int, error) {
-	if w == nil || w.target == nil {
-		return len(data), nil
+	if w.target == nil {
+		return 0, errors.New("redactingWriter: target writer is nil")
 	}
 	if _, err := io.WriteString(w.target, w.redactor.String(string(data))); err != nil {
 		return 0, err
